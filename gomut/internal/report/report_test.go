@@ -50,7 +50,7 @@ func TestScoreReportText(t *testing.T) {
 	pkgs, pkgErrors, opNames := buildSample()
 
 	const eps = 1e-9
-	r := New("gomut", "0.1.0", pkgs, pkgErrors, opNames)
+	r := New("gomut", "0.2.0", pkgs, pkgErrors, opNames)
 
 	// Overall score (ADR-0001 D5): main = detected/(total-NO_COVERAGE);
 	// raw = detected/total.
@@ -140,7 +140,7 @@ func TestZeroDenominatorScoresHundred(t *testing.T) {
 			{Operator: "Math", File: "x.go", RelFile: "x.go", Line: 1, Desc: "x", Status: mutant.NoCoverage},
 		},
 	}
-	r := New("gomut", "0.1.0", pkgs, nil, []string{"Math"})
+	r := New("gomut", "0.2.0", pkgs, nil, []string{"Math"})
 	if r.Score.Main != 100 {
 		t.Errorf("main = %v, want 100 (zero denominator)", r.Score.Main)
 	}

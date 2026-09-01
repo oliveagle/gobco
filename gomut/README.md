@@ -57,7 +57,7 @@ both to get a fuller picture of test quality.
 ~~~text
 $ go build -o gomut ./cmd/gomut
 $ ./gomut -version
-gomut 0.1.0
+gomut 0.2.0
 ~~~
 
 It also installs cleanly into `$GOPATH/bin`:

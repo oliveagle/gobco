@@ -151,7 +151,7 @@ plus an aggregated `score` block:
 ```json
 {
   "tool": "gomut",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "generated": "2026-09-01T14:33:37.155460409+08:00",
   "packages": [ ... ],
   "score": {
