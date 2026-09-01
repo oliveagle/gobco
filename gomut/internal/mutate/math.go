@@ -270,7 +270,9 @@ func fitsInt(t types.Type, v int64) bool {
 	case types.Uint32:
 		return v >= 0 && v < 4294967296
 	case types.Int64:
-		return v >= -9223372036854775808 && v < 9223372036854775807
+		// v is already int64, so it always satisfies the lower bound; only
+		// the upper bound (v == MaxInt64) can fail, per SA4003.
+		return v < 9223372036854775807
 	case types.Uint64:
 		return v >= 0
 	}

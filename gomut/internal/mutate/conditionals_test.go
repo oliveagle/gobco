@@ -144,6 +144,9 @@ func TestSelect(t *testing.T) {
 func TestAllIsIndependentCopy(t *testing.T) {
 	a := All()
 	a = a[:1]
+	if len(a) != 1 {
+		t.Fatalf("precondition: len(a) = %d, want 1", len(a))
+	}
 	b := All()
 	if len(b) != 8 {
 		t.Errorf("All() corrupted by previous slice: %d", len(b))
