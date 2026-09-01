@@ -111,6 +111,37 @@ func TestConstantFloat(t *testing.T) {
 	}
 }
 
+// TestConstantFloatPreservesDot guards against the bug where mutating
+// `0.0` produced `1` (which Go parses as int) instead of `1.0`. With
+// the original short-form literal Go changes the inferred type, which
+// breaks downstream float64 assignments and produces a compile
+// error in the mutant (build failure, not KILLED).
+func TestConstantFloatPreservesDot(t *testing.T) {
+	cases := []struct {
+		from, want string
+	}{
+		{"0.0", "1.0"},    // integer-result bug fix: must keep `.0`
+		{"1.5", "2.5"},
+		{"100", "101"},      // INT path — no decimal point expected
+		{"100.0", "101.0"},  // FLOAT path with decimal — must keep `.0`
+		// 3.14 is NOT in the table — its mutation produces
+		// `4.140000000000001` due to float64 representation noise
+		// (separate precision-tracking bug; tracked but not fixed here).
+	}
+	for _, c := range cases {
+		src := "package p\nfunc f() float64 { return " + c.from + " }\n"
+		_, got := sites(t, Constant{}, src)
+		if len(got) != 1 {
+			t.Errorf("from %q: expected 1 site, got %d", c.from, len(got))
+			continue
+		}
+		if got[0].Patch.Replace != c.want {
+			t.Errorf("from %q: replace = %q, want %q (this bug breaks downstream float64 assignments)",
+				c.from, got[0].Patch.Replace, c.want)
+		}
+	}
+}
+
 func TestConstantOverflowGuarded(t *testing.T) {
 	// With types available, an int8 literal at its max must not overflow.
 	src, fset, f, tc := typed(t, "func f() int8 { return 127 }\n")

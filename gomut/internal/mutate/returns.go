@@ -5,6 +5,7 @@ import (
 	"github.com/oliveagle/gobco/gomut/internal/mutant"
 	"go/ast"
 	"go/token"
+	"go/constant"
 	"go/types"
 	"strconv"
 	"strings"
@@ -79,9 +80,19 @@ func mutateReturn(src string, fset *token.FileSet, file *ast.File, tc *mutant.Ty
 		start := fset.Position(res.Pos()).Offset
 		end := fset.Position(res.End()).Offset
 		orig := strings.TrimSpace(src[start:end])
+		// Compute the original's constant value so we can skip replacements
+		// that resolve to the same compile-time value. Catches the iota-bug
+		// pattern `ModeText` ↔ `0` where the named constant and the integer
+		// literal are byte-identical at compile time.
+		origConst := astConstValue(res, tc)
 		for _, rep := range reps {
 			if rep == orig {
 				continue // no-op mutant
+			}
+			if origConst != nil {
+				if repConst := literalConstValue(rep); repConst != nil && sameConst(*origConst, *repConst) {
+					continue // equivalent mutation: skip
+				}
 			}
 			sites = append(sites, mutant.Site{
 				Line: fset.Position(res.Pos()).Line,
@@ -96,6 +107,109 @@ func mutateReturn(src string, fset *token.FileSet, file *ast.File, tc *mutant.Ty
 	}
 	return sites
 }
+
+// astConstValue extracts the constant value from an AST expression.
+// Supports BasicLit (numeric/string literals), Ident (named constants
+// resolved via tc.Info), and unary +/- wrapping any of these. Returns nil
+// for expressions whose constant value cannot be determined statically.
+func astConstValue(expr ast.Expr, tc *mutant.TypeCtx) *string {
+	if expr == nil || tc == nil || tc.Info == nil {
+		return nil
+	}
+	switch v := expr.(type) {
+	case *ast.BasicLit:
+		return literalConstValue(v.Value)
+	case *ast.Ident:
+		obj := tc.Info.ObjectOf(v)
+		if con, ok := obj.(*types.Const); ok {
+			s := constToString(con.Val())
+			if s != "" {
+				return &s
+			}
+		}
+	case *ast.ParenExpr:
+		return astConstValue(v.X, tc)
+	case *ast.UnaryExpr:
+		// Support leading +/- on numeric literals and named consts.
+		inner := astConstValue(v.X, tc)
+		if inner == nil {
+			return nil
+		}
+		if v.Op == token.SUB {
+			if strings.HasPrefix(*inner, "-") {
+				*inner = strings.TrimPrefix(*inner, "-")
+			} else {
+				neg := "-" + *inner
+				inner = &neg
+			}
+			return inner
+		}
+	}
+	return nil
+}
+
+// literalConstValue parses a Go literal string into a normalized constant
+// representation. Returns nil for literals we don't recognize.
+func literalConstValue(s string) *string {
+	t := strings.TrimSpace(s)
+	// Strip underscores (Go allows them in numeric literals).
+	stripped := strings.ReplaceAll(t, "_", "")
+	// Integer?
+	if _, err := strconv.ParseInt(stripped, 0, 64); err == nil {
+		out := stripped
+		return &out
+	}
+	// Float?
+	if _, err := strconv.ParseFloat(stripped, 64); err == nil {
+		out := stripped
+		return &out
+	}
+	return nil
+}
+
+// sameConst reports whether two constant-value strings denote the same Go
+// constant value. Comparison is performed numerically (after parsing both as
+// float64) so that "0" and "0.0" compare equal, "1" and "1.0" compare equal,
+// but "0" and "1" do not. Strings are compared verbatim.
+func sameConst(a, b string) bool {
+	// Strip underscores (Go allows them in numeric literals).
+	na := strings.ReplaceAll(a, "_", "")
+	nb := strings.ReplaceAll(b, "_", "")
+	if na == nb {
+		return true
+	}
+	fa, errA := strconv.ParseFloat(na, 64)
+	fb, errB := strconv.ParseFloat(nb, 64)
+	if errA == nil && errB == nil {
+		return fa == fb
+	}
+	return false
+}
+
+// constToString converts a types.Constant to its textual representation.
+// Returns "" for values we don't know how to render.
+func constToString(v constant.Value) string {
+	if v == nil {
+		return ""
+	}
+	// Check Kind() first; Int64Val/Float64Val panic on wrong types.
+	switch v.Kind() {
+	case constant.Int:
+		if i, ok := constant.Int64Val(v); ok {
+			return strconv.FormatInt(i, 10)
+		}
+	case constant.Float:
+		if f, ok := constant.Float64Val(v); ok {
+			return strconv.FormatFloat(f, 'g', -1, 64)
+		}
+	case constant.String:
+		return constant.StringVal(v)
+	case constant.Bool:
+		return strconv.FormatBool(constant.BoolVal(v))
+	}
+	return ""
+}
+
 
 // returnReplacements lists zero-value replacements for a result type.
 func returnReplacements(t types.Type, tc *mutant.TypeCtx, file *ast.File) []string {

@@ -216,7 +216,24 @@ func (Constant) Mutate(src string, fset *token.FileSet, file *ast.File, tc *muta
 			if err != nil {
 				return true
 			}
-			newVal = strconv.FormatFloat(v+1, 'f', -1, 64)
+			// Use 'g' format and ensure the result carries a decimal point so
+			// Go keeps the result typed as float64. Without this, `0.0`
+			// would mutate to `1` (Go infers int) and break downstream
+			// float64 assignments like `totalPct := 0.0` → `totalPct := 1`
+			// followed by `totalPct = 100.0 * ...` — a compile error in the
+			// mutant that reports as COMPILE_ERROR rather than KILLED.
+			//
+			// For values like `1.5` the formatter already emits `2.5` (has a
+			// decimal) and we leave it alone. For `0.0` the formatter emits
+			// `1` (no decimal) and we append `.0` to get `1.0`.
+			//
+			// Note: this still has cosmetic noise for inexact float64 like
+			// `3.14` → `4.140000000000001`. Tracking that as a separate fix
+			// (would require rounding to the original literal's precision).
+			newVal = strconv.FormatFloat(v+1, 'g', -1, 64)
+			if !strings.ContainsAny(newVal, ".eE") {
+				newVal = newVal + ".0"
+			}
 		default:
 			return true
 		}
