@@ -20,7 +20,7 @@ import (
 // block was executed at least once.
 type Statement struct {
 	// File is the package path with the file name, e.g.
-	// "github.com/oliveagle/gomut/a.go". It matches the file key used elsewhere.
+	// "github.com/oliveagle/gobco/gomut/a.go". It matches the file key used elsewhere.
 	File string
 	// Start and End are the inclusive line numbers the statement occupies.
 	Start, End int

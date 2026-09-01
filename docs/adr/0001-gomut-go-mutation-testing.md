@@ -114,7 +114,7 @@
 - `-no-cache` 关闭。
 
 ### D8 — 项目结构
-- 新建**嵌套 Go module** `gomut/`（`module github.com/oliveagle/gomut`），独立于根 gobco module，避免两个工具互相污染依赖。
+- 新建**嵌套 Go module** `gomut/`（`module github.com/oliveagle/gobco/gomut`），独立于根 gobco module，避免两个工具互相污染依赖。
 - 分层：`cmd/gomut`（CLI 入口）→ `internal/engine`（主循环：扫描→选择→执行→汇总）→ `internal/{mutate,cover,exec,report}`（各自单一职责）。
 - 与根模块无 import 依赖（gomut 不 import gobco），纯 stdlib（go/parser, go/ast, go/types, go/importer, encoding/json, os/exec, sync）。
 

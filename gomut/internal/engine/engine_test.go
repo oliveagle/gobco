@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/oliveagle/gomut/internal/mutant"
-	"github.com/oliveagle/gomut/internal/report"
+	"github.com/oliveagle/gobco/gomut/internal/mutant"
+	"github.com/oliveagle/gobco/gomut/internal/report"
 )
 
 // TestEndToEnd runs the full pipeline against the tiny sample module
@@ -49,7 +49,7 @@ func TestEndToEnd(t *testing.T) {
 
 	var pkg *report.Pkg
 	for i := range rep.Packages {
-		if rep.Packages[i].ImportPath == "github.com/oliveagle/gomut/testdata/sample" {
+		if rep.Packages[i].ImportPath == "github.com/oliveagle/gobco/gomut/testdata/sample" {
 			pkg = &rep.Packages[i]
 		}
 	}

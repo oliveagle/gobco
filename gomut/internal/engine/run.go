@@ -10,9 +10,9 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/oliveagle/gomut/internal/cover"
-	gexec "github.com/oliveagle/gomut/internal/exec"
-	"github.com/oliveagle/gomut/internal/mutant"
+	"github.com/oliveagle/gobco/gomut/internal/cover"
+	gexec "github.com/oliveagle/gobco/gomut/internal/exec"
+	"github.com/oliveagle/gobco/gomut/internal/mutant"
 )
 
 // srcFile is a parsed production file of the package under test.

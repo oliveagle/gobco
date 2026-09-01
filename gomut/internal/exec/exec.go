@@ -20,7 +20,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/oliveagle/gomut/internal/mutant"
+	"github.com/oliveagle/gobco/gomut/internal/mutant"
 )
 
 // maxOutput caps how much run output is retained (the tail is kept).

@@ -22,9 +22,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/oliveagle/gomut/internal/engine"
-	"github.com/oliveagle/gomut/internal/mutate"
-	"github.com/oliveagle/gomut/internal/report"
+	"github.com/oliveagle/gobco/gomut/internal/engine"
+	"github.com/oliveagle/gobco/gomut/internal/mutate"
+	"github.com/oliveagle/gobco/gomut/internal/report"
 )
 
 const version = "0.1.0"

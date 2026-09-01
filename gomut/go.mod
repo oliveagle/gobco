@@ -1,3 +1,3 @@
-module github.com/oliveagle/gomut
+module github.com/oliveagle/gobco/gomut
 
 go 1.16

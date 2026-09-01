@@ -12,7 +12,7 @@ import (
 	"os"
 	"os/exec"
 
-	"github.com/oliveagle/gomut/internal/mutant"
+	"github.com/oliveagle/gobco/gomut/internal/mutant"
 )
 
 // TypeCheck builds type information for a package's production files.

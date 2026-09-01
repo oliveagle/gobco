@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/oliveagle/gomut/internal/mutant"
-	"github.com/oliveagle/gomut/internal/report"
+	"github.com/oliveagle/gobco/gomut/internal/mutant"
+	"github.com/oliveagle/gobco/gomut/internal/report"
 )
 
 // TestAllTestsMode exercises the -all-tests engine mode (an untested path:
@@ -117,7 +117,7 @@ func TestExamplesEffectiveness(t *testing.T) {
 	if err != nil {
 		t.Fatalf("weak example run: %v", err)
 	}
-	weakPkg := findPkg(t, weak, "github.com/oliveagle/gomut/examples/01-surviving-mutants")
+	weakPkg := findPkg(t, weak, "github.com/oliveagle/gobco/gomut/examples/01-surviving-mutants")
 	if weakPkg.Mutants == nil {
 		t.Fatal("no mutants generated for the weak example")
 	}
@@ -151,7 +151,7 @@ func TestExamplesEffectiveness(t *testing.T) {
 	if err != nil {
 		t.Fatalf("strong example run: %v", err)
 	}
-	strongPkg := findPkg(t, strong, "github.com/oliveagle/gomut/examples/02-strong-tests")
+	strongPkg := findPkg(t, strong, "github.com/oliveagle/gobco/gomut/examples/02-strong-tests")
 	if strongPkg.Mutants == nil {
 		t.Fatal("no mutants generated for the strong example")
 	}

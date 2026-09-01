@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/oliveagle/gomut/internal/mutant"
+	"github.com/oliveagle/gobco/gomut/internal/mutant"
 )
 
 // sites parses src (adding a package clause if missing) and returns

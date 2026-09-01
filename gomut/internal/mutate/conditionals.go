@@ -2,7 +2,7 @@ package mutate
 
 import (
 	"fmt"
-	"github.com/oliveagle/gomut/internal/mutant"
+	"github.com/oliveagle/gobco/gomut/internal/mutant"
 	"go/ast"
 	"go/token"
 )

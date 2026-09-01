@@ -33,11 +33,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/oliveagle/gomut/internal/cover"
-	gexec "github.com/oliveagle/gomut/internal/exec"
-	"github.com/oliveagle/gomut/internal/mutant"
-	"github.com/oliveagle/gomut/internal/mutate"
-	"github.com/oliveagle/gomut/internal/report"
+	"github.com/oliveagle/gobco/gomut/internal/cover"
+	gexec "github.com/oliveagle/gobco/gomut/internal/exec"
+	"github.com/oliveagle/gobco/gomut/internal/mutant"
+	"github.com/oliveagle/gobco/gomut/internal/mutate"
+	"github.com/oliveagle/gobco/gomut/internal/report"
 )
 
 // Options configures a mutation testing run (ADR-0001 D9, D6).

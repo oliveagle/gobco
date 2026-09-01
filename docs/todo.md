@@ -14,7 +14,7 @@
 | ADR-0001-D5 | 结果分类 | KILLED/SURVIVED/NO_COVERAGE/TIMED_OUT/COMPILE_ERROR/RUN_ERROR；detected=KILLED+TIMED_OUT；主分数 = detected/(total-NO_COVERAGE) | ADR-0001 |
 | ADR-0001-D6 | 执行模型 | 每 mutant 一个 go test 子进程，setpgid + kill(-pgid) 超时终止，并发 -p，-failfast | ADR-0001 |
 | ADR-0001-D7 | 缓存 | 源+测试+算子集+go版本 hash → .gomut-cache/，-no-cache 关闭 | ADR-0001 |
-| ADR-0001-D8 | 项目结构 | 嵌套独立 module `gomut/`（github.com/oliveagle/gomut），cmd→engine→{mutate,cover,exec,report} 单向依赖，纯 stdlib | ADR-0001 |
+| ADR-0001-D8 | 项目结构 | 嵌套独立 module `gomut/`（github.com/oliveagle/gobco/gomut），cmd→engine→{mutate,cover,exec,report} 单向依赖，纯 stdlib | ADR-0001 |
 | ADR-0001-D9 | CLI | flags 与退出码约定（见 ADR-0001 §5-D9） | ADR-0001 |
 | ADR-0001-D10 | 范围 | v1 仅 go.mod 模块、只变异生产代码、无 HTML 报告 | ADR-0001 |
 | SUB-1 | pitest submodule | `submodules/pitest` @ tag 1.25.9 (23f22e12)，URL 用 SSH（本机 https TLS 受限） | 2026-08-26 |

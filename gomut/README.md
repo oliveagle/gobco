@@ -63,7 +63,7 @@ gomut 0.1.0
 It also installs cleanly into `$GOPATH/bin`:
 
 ~~~text
-$ go install github.com/oliveagle/gomut/cmd/gomut@latest
+$ go install github.com/oliveagle/gobco/gomut/cmd/gomut@latest
 ~~~
 
 ## Usage
@@ -142,7 +142,7 @@ Per-operator:
   NegateConditionals          2      2     100.0%
   ReturnVals                  5      5     100.0%
 
-github.com/oliveagle/gomut/testdata/sample (18 mutants)
+github.com/oliveagle/gobco/gomut/testdata/sample (18 mutants)
   KILLED       ConditionalsBoundary math.go:11  replaced "v > 0" with "v >= 0"
   KILLED       ReturnVals         math.go:11  return value replaced with false (bool)
   SURVIVED     ConditionalsBoundary math.go:18  replaced "a < 0" with "a <= 0"

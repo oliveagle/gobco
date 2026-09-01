@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/oliveagle/gomut/internal/mutant"
+	"github.com/oliveagle/gobco/gomut/internal/mutant"
 )
 
 // logCapture is a concurrency-safe collector of engine log lines. It is used

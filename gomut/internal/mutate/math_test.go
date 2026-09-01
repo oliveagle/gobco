@@ -7,7 +7,7 @@ import (
 	"go/types"
 	"testing"
 
-	"github.com/oliveagle/gomut/internal/mutant"
+	"github.com/oliveagle/gobco/gomut/internal/mutant"
 )
 
 // typed parses src (adding a package clause if missing) and returns the

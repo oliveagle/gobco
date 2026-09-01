@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/oliveagle/gomut/internal/mutant"
+	"github.com/oliveagle/gobco/gomut/internal/mutant"
 )
 
 // buildSample returns a fixed set of mutants with a spread of statuses plus

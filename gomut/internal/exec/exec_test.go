@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/oliveagle/gomut/internal/mutant"
+	"github.com/oliveagle/gobco/gomut/internal/mutant"
 )
 
 func TestClassify(t *testing.T) {

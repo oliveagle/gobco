@@ -9,7 +9,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/oliveagle/gomut/internal/mutate"
+	"github.com/oliveagle/gobco/gomut/internal/mutate"
 )
 
 func TestDebugSites(t *testing.T) {

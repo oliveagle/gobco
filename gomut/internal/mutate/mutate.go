@@ -15,7 +15,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/oliveagle/gomut/internal/mutant"
+	"github.com/oliveagle/gobco/gomut/internal/mutant"
 )
 
 // defaultOps is the built-in operator set, in report order (ADR-0001 D4).

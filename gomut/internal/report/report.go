@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/oliveagle/gomut/internal/mutant"
+	"github.com/oliveagle/gobco/gomut/internal/mutant"
 )
 
 // Mutant is one mutant and its outcome, in report form.

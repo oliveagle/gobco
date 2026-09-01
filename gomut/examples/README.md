@@ -43,7 +43,7 @@ From anywhere inside one of the example modules:
 
 ```console
 $ cd gomut/examples/01-surviving-mutants
-$ go build -o /tmp/gomut ../../cmd/gomut     # or: go install github.com/oliveagle/gomut/cmd/gomut
+$ go build -o /tmp/gomut ../../cmd/gomut     # or: go install github.com/oliveagle/gobco/gomut/cmd/gomut
 $ /tmp/gomut -v .
 ```
 
@@ -68,9 +68,9 @@ Per-operator:
   NegateConditionals          2      2     100.0%
   ReturnVals                  5      2      50.0%
 
-github.com/oliveagle/gomut/examples/01-surviving-mutants (17 mutants)
+github.com/oliveagle/gobco/gomut/examples/01-surviving-mutants (17 mutants)
   SURVIVED     BooleanSwap        weak.go:13  replaced "&&" with "||"
-      | ok  	github.com/oliveagle/gomut/examples/01-surviving-mutants	0.002s
+      | ok  	github.com/oliveagle/gobco/gomut/examples/01-surviving-mutants	0.002s
   KILLED       ReturnVals         weak.go:13  return value replaced with false (bool)  [killed by TestBetween]
       | --- FAIL: TestBetween (0.00s)
       |     weak_test.go:10: want true for an in-range value
@@ -93,7 +93,7 @@ The identical source with thorough boundary/branch tests:
 Mutation testing: 82.4% mutation score (14/17 detected, 0 no coverage)
   (raw: 14/17 = 82.4%)
 
-github.com/oliveagle/gomut/examples/02-strong-tests (17 mutants)
+github.com/oliveagle/gobco/gomut/examples/02-strong-tests (17 mutants)
   KILLED       BooleanSwap        strong.go:13  replaced "&&" with "||"  [killed by TestBetween]
       | --- FAIL: TestBetween (0.00s)
       |     strong_test.go:18: Between(-1,0,10) = true, want false
@@ -104,9 +104,9 @@ github.com/oliveagle/gomut/examples/02-strong-tests (17 mutants)
       | FAIL
   ...
   SURVIVED     Constant           strong.go:18  constant 0 replaced with 1   (equivalent)
-      | ok  	github.com/oliveagle/gomut/examples/02-strong-tests	0.002s
+      | ok  	github.com/oliveagle/gobco/gomut/examples/02-strong-tests	0.002s
   SURVIVED     ConditionalsBoundary strong.go:18  replaced "x < 0" with "x <= 0" (equivalent)
-      | ok  	github.com/oliveagle/gomut/examples/02-strong-tests	0.002s
+      | ok  	github.com/oliveagle/gobco/gomut/examples/02-strong-tests	0.002s
 ```
 
 Three mutants still survive — but here they are **equivalent**: `constant 0→1`
