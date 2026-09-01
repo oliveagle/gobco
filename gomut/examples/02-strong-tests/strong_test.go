@@ -5,7 +5,7 @@ import "testing"
 func TestBetween(t *testing.T) {
 	cases := []struct {
 		v, lo, hi int
-		want     bool
+		want      bool
 	}{
 		{5, 0, 10, true},
 		{-1, 0, 10, false}, // below lo

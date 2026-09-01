@@ -165,18 +165,16 @@ func (e *Engine) cacheLoad(p listPkg, muts []*mutant.Mutant, files []srcFile) bo
 	if err := json.Unmarshal(data, &cached); err != nil || len(cached) != len(muts) {
 		return false
 	}
-	byID := make(map[string]cachedMutant, len(cached))
-	for _, c := range cached {
-		byID[c.ID] = c
-	}
-	for _, m := range muts {
-		c, ok := byID[m.ID()]
-		if !ok {
-			return false
-		}
-		m.Status = mutant.Status(c.Status)
-		m.Killers = c.Killers
-		m.Output = c.Output
+	// Assign cached[i] to muts[i]. cacheStore writes mutants in the same
+	// deterministic (File, Line) sort order every run for unchanged
+	// sources, so the indices line up. Keying on Mutant.ID() would be
+	// wrong: several single-site mutants share operator+file+line (a bool
+	// return yields two ReturnVals mutants on the same line), which an ID
+	// map collapses into a single stale status.
+	for i, c := range cached {
+		muts[i].Status = mutant.Status(c.Status)
+		muts[i].Killers = c.Killers
+		muts[i].Output = c.Output
 	}
 	e.logf("  cache hit: %d mutants from %s", len(muts), path)
 	return true

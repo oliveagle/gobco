@@ -145,7 +145,7 @@ func Run(parent context.Context, tr TestRun) Result {
 }
 
 func buildTestArgs(tr TestRun) []string {
-	args := []string{"test"}
+	args := []string{"test", "-count=1"}
 	if len(tr.Tests) > 0 {
 		// Test names are identifiers, safe to embed unescaped.
 		args = append(args, "-run=^("+strings.Join(tr.Tests, "|")+")$")

@@ -9,6 +9,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/oliveagle/gomut/internal/mutant"
 )
 
 // logCapture is a concurrency-safe collector of engine log lines. It is used
@@ -90,5 +92,36 @@ func TestEngineCache(t *testing.T) {
 	run(second)
 	if !second.contains("cache hit") {
 		t.Fatalf("second run did not report a cache hit; logs=%v", second.msg)
+	}
+}
+
+// TestCacheLoadPreservesDistinctMutants guards the ADR-0001 D7 cache load
+// against a class of bug in which several single-site mutants share
+// operator+file+line (hence a shared Mutant.ID): a cache keyed on ID collapses
+// them into one stale status. The index-based load assigns cached[i] to
+// muts[i], so distinct mutants keep distinct statuses.
+func TestCacheLoadPreservesDistinctMutants(t *testing.T) {
+	dir := t.TempDir()
+	files := []srcFile{{name: "foo.go", content: "package foo\n"}}
+	p := listPkg{ImportPath: "example.com/foo", Dir: dir}
+	// Two ReturnVals mutants on the same bool return: same ID, but different
+	// correct outcomes — one is KILLED by a test, the other SURVIVES.
+	muts := []*mutant.Mutant{
+		{Operator: "ReturnVals", Package: "example.com/foo", File: "example.com/foo/foo.go", Line: 13, Desc: "return value replaced with false (bool)", Status: mutant.Killed},
+		{Operator: "ReturnVals", Package: "example.com/foo", File: "example.com/foo/foo.go", Line: 13, Desc: "return value replaced with true (bool)", Status: mutant.Survived},
+	}
+	e := New(Options{})
+	e.cacheStore(p, muts, files)
+	// Wipe the in-memory statuses; cacheLoad must repopulate each correctly.
+	muts[0].Status = ""
+	muts[1].Status = ""
+	if !e.cacheLoad(p, muts, files) {
+		t.Fatalf("cache load: miss (expected hit)")
+	}
+	if got, want := muts[0].Status, mutant.Killed; got != want {
+		t.Errorf("false-return mutant status = %q, want %q", got, want)
+	}
+	if got, want := muts[1].Status, mutant.Survived; got != want {
+		t.Errorf("true-return mutant status = %q, want %q", got, want)
 	}
 }

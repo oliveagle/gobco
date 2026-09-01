@@ -52,7 +52,7 @@ func TestBuildTestArgs(t *testing.T) {
 		OverlayPath:  "/tmp/o.json",
 	}
 	got := strings.Join(buildTestArgs(tr), " ")
-	want := "test -run=^(TestA|TestB)$ -failfast -covermode=count -coverprofile=/tmp/c.out -overlay=/tmp/o.json pkg"
+	want := "test -count=1 -run=^(TestA|TestB)$ -failfast -covermode=count -coverprofile=/tmp/c.out -overlay=/tmp/o.json pkg"
 	if got != want {
 		t.Errorf("args = %s, want %s", got, want)
 	}
