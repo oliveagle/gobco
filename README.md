@@ -76,3 +76,19 @@ Gobco only inserts its coverage code around expressions that are syntactically
 recognizable as boolean expressions, such as comparisons, '&&', '||', '!'.
 When a boolean expression is merely passed around, there is no branch 
 involved, thus nothing to do for branch coverage.
+
+## Bundled tool: gomut (mutation testing)
+
+This repository also ships [`gomut`](gomut/README.md), a mutation testing
+tool for Go. Where gobco measures *whether* your tests execute each branch,
+gomut measures *whether* your tests would notice if that branch were wrong —
+a much stronger guarantee than line coverage.
+
+~~~text
+$ go install github.com/oliveagle/gobco/gomut/cmd/gomut@v0.2.0
+$ gomut -version
+gomut 0.2.0
+~~~
+
+See [`gomut/README.md`](gomut/README.md) for usage, flags, and the runnable
+examples in [`gomut/examples/`](gomut/examples/).
