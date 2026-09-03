@@ -213,3 +213,45 @@ func TestEngineCacheIncremental(t *testing.T) {
 		t.Errorf("math.go:29 mutants should be reused (TestCount unchanged); logs=%v", second.msg)
 	}
 }
+
+// TestCacheStoreSkipsTransientBuildStatuses pins the robustness fix that
+// keeps COMPILE_ERROR and RUN_ERROR out of the persistent cache: they can be
+// caused by a transient Go build-cache eviction under host load (e.g. a
+// cleaned /tmp) rather than by the mutation itself, so caching them would
+// poison the (incremental) cache with a degraded score that then survives
+// unrelated test edits.
+func TestCacheStoreSkipsTransientBuildStatuses(t *testing.T) {
+	dir := t.TempDir()
+	files := []srcFile{{name: "foo.go", content: "package foo\n"}}
+	p := listPkg{ImportPath: "example.com/foo", Dir: dir}
+	muts := []*mutant.Mutant{
+		{Operator: "NegateConditionals", Package: "example.com/foo", File: "example.com/foo/foo.go", Line: 10, Desc: "negated condition", Status: mutant.Killed},
+		{Operator: "ReturnVals", Package: "example.com/foo", File: "example.com/foo/foo.go", Line: 11, Desc: "return value replaced with nil (error)", Status: mutant.CompileError},
+		{Operator: "Constant", Package: "example.com/foo", File: "example.com/foo/foo.go", Line: 12, Desc: "constant 0 replaced with 1", Status: mutant.RunError},
+		{Operator: "Math", Package: "example.com/foo", File: "example.com/foo/foo.go", Line: 13, Desc: "replaced + with -", Status: mutant.Survived},
+	}
+	e := New(Options{})
+	e.cacheStore(p, muts, nil, nil, files)
+
+	// Reload via cacheLoad: only KILLED and SURVIVED should be reused; the
+	// COMPILE_ERROR and RUN_ERROR mutants must remain pending.
+	muts[0].Status = ""
+	muts[1].Status = ""
+	muts[2].Status = ""
+	muts[3].Status = ""
+	if e.cacheLoad(p, muts, nil, nil, files) {
+		t.Fatalf("cacheLoad reported a full hit; the transient-status mutants must stay pending")
+	}
+	if got, want := muts[0].Status, mutant.Killed; got != want {
+		t.Errorf("killed mutant status = %q, want %q (must be reused)", got, want)
+	}
+	if got, want := muts[3].Status, mutant.Survived; got != want {
+		t.Errorf("survived mutant status = %q, want %q (must be reused)", got, want)
+	}
+	if muts[1].Status != "" {
+		t.Errorf("COMPILE_ERROR mutant status = %q, want empty (must not be cached)", muts[1].Status)
+	}
+	if muts[2].Status != "" {
+		t.Errorf("RUN_ERROR mutant status = %q, want empty (must not be cached)", muts[2].Status)
+	}
+}

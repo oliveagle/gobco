@@ -276,6 +276,16 @@ func (e *Engine) cacheStore(p listPkg, muts []*mutant.Mutant, selected map[*muta
 		if m.Status == "" {
 			continue
 		}
+		// Do not persist transient build statuses: a COMPILE_ERROR from a
+		// Go build-cache eviction (e.g. /tmp cleaned under load) or a
+		// RUN_ERROR from a transient host problem is not evidence that the
+		// mutant is unkillable. Excluding them from the cache lets the next
+		// run retry, and stops a host hiccup from poisoning the incremental
+		// cache (which would otherwise keep the degraded score across test
+		// edits).
+		if m.Status == mutant.CompileError || m.Status == mutant.RunError {
+			continue
+		}
 		cached = append(cached, cachedMutant{
 			ID:        mutantKey(m),
 			Status:    string(m.Status),
