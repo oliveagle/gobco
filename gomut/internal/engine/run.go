@@ -8,6 +8,8 @@ import (
 	"go/ast"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"sync"
 	"time"
 
@@ -28,11 +30,13 @@ type srcFile struct {
 // execute runs the pending mutants (status == "") in a pool of parallel
 // workers, one isolated "go test" subprocess per mutant (ADR-0001 D6),
 // and maintains the result cache (D7).
-func (e *Engine) execute(ctx context.Context, p listPkg, muts []*mutant.Mutant, selected map[*mutant.Mutant][]string, files []srcFile) {
+func (e *Engine) execute(ctx context.Context, p listPkg, muts []*mutant.Mutant, selected map[*mutant.Mutant][]string, files []srcFile, testHashes map[string]string) {
 	t0 := time.Now()
-	// D7 cache: hit -> reuse, else run and store.
+	// D7 cache: hit -> reuse, else run and store. The cache is incremental:
+	// a mutant is reused only if its coverage-selected tests are unchanged
+	// AND the source of exactly those tests is unchanged (see cacheLoad).
 	if !e.opts.NoCache {
-		if e.cacheLoad(p, muts, files) {
+		if e.cacheLoad(p, muts, selected, testHashes, files) {
 			return
 		}
 	}
@@ -82,7 +86,7 @@ func (e *Engine) execute(ctx context.Context, p listPkg, muts []*mutant.Mutant, 
 	e.logf("execute: %d mutants in %s", len(pending), time.Since(t0).Round(time.Millisecond))
 
 	if !e.opts.NoCache {
-		e.cacheStore(p, muts, files)
+		e.cacheStore(p, muts, selected, testHashes, files)
 	}
 }
 
@@ -121,15 +125,77 @@ func (e *Engine) mark(m *mutant.Mutant, st mutant.Status, killers []string, outp
 
 // ---- D7 cache ----------------------------------------------------------
 
-// cachedMutant is the persisted per-mutant result.
+// cachedMutant is the persisted per-mutant result, keyed by the full mutant
+// identity (operator|file|line|desc) so distinct mutants that share
+// operator+file+line (e.g. two ReturnVals on one bool return) keep distinct
+// statuses.
 type cachedMutant struct {
 	ID      string   `json:"id"`
 	Status  string   `json:"status"`
 	Killers []string `json:"killers,omitempty"`
 	Output  string   `json:"output,omitempty"`
+	// Tests are the coverage-selected tests that ran against this mutant;
+	// TestsHash fingerprints the source of exactly those tests. On a later
+	// run, if the mutant's selected set is unchanged AND the selected tests'
+	// source is unchanged, the stored result is still valid — even if some
+	// OTHER test in the package changed. This is what makes the cache
+	// incremental: editing one test only invalidates the mutants covered by
+	// it, not the whole package.
+	Tests     []string `json:"tests,omitempty"`
+	TestsHash string   `json:"testsHash,omitempty"`
 }
 
-// cacheKey hashes sources, tests, operators and go version.
+// mutantKey uniquely identifies a single-site mutant.
+func mutantKey(m *mutant.Mutant) string {
+	return m.Operator + "|" + m.File + "|" + strconv.Itoa(m.Line) + "|" + m.Desc
+}
+
+// selectedTestsHash fingerprints the source of the tests selected for a
+// mutant: sha256 of the concatenated per-test source hashes in the given
+// (already sorted) order. If none of the selected tests changed, the hash is
+// unchanged; if any did, it changes — and only then is the mutant re-run.
+func selectedTestsHash(selected []string, testHashes map[string]string) string {
+	if len(selected) == 0 {
+		return ""
+	}
+	h := sha256.New()
+	for _, t := range selected {
+		th, ok := testHashes[t]
+		if !ok {
+			continue
+		}
+		h.Write([]byte(t))
+		h.Write([]byte{0})
+		h.Write([]byte(th))
+		h.Write([]byte{0})
+	}
+	return hex.EncodeToString(h.Sum(nil))[:16]
+}
+
+// mutantTestsHash returns the fingerprint to compare for a single mutant:
+// the source of its coverage-selected tests, or (in AllTests mode, where
+// every mutant runs the whole suite) the whole suite's source so that any
+// test edit invalidates every mutant.
+func (e *Engine) mutantTestsHash(tests []string, testHashes map[string]string) string {
+	if e.opts.AllTests {
+		if len(testHashes) == 0 {
+			return ""
+		}
+		names := make([]string, 0, len(testHashes))
+		for n := range testHashes {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		return selectedTestsHash(names, testHashes)
+	}
+	return selectedTestsHash(tests, testHashes)
+}
+
+// cacheKey hashes sources (production files), operators and go version.
+// Test files are deliberately NOT in this key: per-mutant validity is decided
+// per mutant via mutantTestsHash, so a change to one test does not invalidate
+// the whole package cache. (A changed production file changes every mutant,
+// so it must still force a fresh package key.)
 func (e *Engine) cacheKey(p listPkg, files []srcFile) string {
 	h := sha256.New()
 	write := func(s string) {
@@ -139,14 +205,6 @@ func (e *Engine) cacheKey(p listPkg, files []srcFile) string {
 	for _, f := range files {
 		write(f.name)
 		write(f.content)
-	}
-	for _, name := range p.TestGoFiles {
-		abs := filepath.Join(p.Dir, name)
-		data, err := os.ReadFile(abs)
-		write(name)
-		if err == nil {
-			write(string(data))
-		}
 	}
 	for _, op := range e.opts.Operators {
 		write(op.Name())
@@ -159,42 +217,72 @@ func (e *Engine) cachePath(p listPkg, files []srcFile) string {
 	return filepath.Join(p.Dir, ".gomut-cache", e.cacheKey(p, files)+".json")
 }
 
-func (e *Engine) cacheLoad(p listPkg, muts []*mutant.Mutant, files []srcFile) bool {
+// cacheLoad reads the package cache and reuses every mutant whose
+// coverage-selected tests are unchanged (same names, same source hash).
+// It returns true when no in-scope mutant remains pending (full hit); a
+// partial hit leaves the survivors pending for re-execution.
+func (e *Engine) cacheLoad(p listPkg, muts []*mutant.Mutant, selected map[*mutant.Mutant][]string, testHashes map[string]string, files []srcFile) bool {
 	path := e.cachePath(p, files)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return false
 	}
 	var cached []cachedMutant
-	if err := json.Unmarshal(data, &cached); err != nil || len(cached) != len(muts) {
+	if err := json.Unmarshal(data, &cached); err != nil {
 		return false
 	}
-	// Assign cached[i] to muts[i]. cacheStore writes mutants in the same
-	// deterministic (File, Line) sort order every run for unchanged
-	// sources, so the indices line up. Keying on Mutant.ID() would be
-	// wrong: several single-site mutants share operator+file+line (a bool
-	// return yields two ReturnVals mutants on the same line), which an ID
-	// map collapses into a single stale status.
-	for i, c := range cached {
-		muts[i].Status = mutant.Status(c.Status)
-		muts[i].Killers = c.Killers
-		muts[i].Output = c.Output
+	byKey := make(map[string]cachedMutant, len(cached))
+	for _, c := range cached {
+		byKey[c.ID] = c
 	}
-	e.logf("  cache hit: %d mutants from %s", len(muts), path)
-	return true
+	reused := 0
+	for _, m := range muts {
+		if m.Status != "" {
+			continue
+		}
+		c, ok := byKey[mutantKey(m)]
+		if !ok {
+			continue
+		}
+		// Incremental validity: the selected test set must match AND the
+		// source of exactly those tests must be unchanged.
+		cur := e.mutantTestsHash(selected[m], testHashes)
+		if c.TestsHash != cur || !sameStringSet(c.Tests, selected[m]) {
+			continue
+		}
+		m.Status = mutant.Status(c.Status)
+		m.Killers = c.Killers
+		m.Output = c.Output
+		reused++
+	}
+	// Full hit only when every mutant has a status.
+	for _, m := range muts {
+		if m.Status == "" {
+			if reused > 0 {
+				e.logf("  cache hit: %d/%d mutants reused from %s (partial)", reused, len(muts), path)
+			}
+			return false
+		}
+	}
+	if reused > 0 {
+		e.logf("  cache hit: %d mutants from %s", len(muts), path)
+	}
+	return reused > 0
 }
 
-func (e *Engine) cacheStore(p listPkg, muts []*mutant.Mutant, files []srcFile) {
+func (e *Engine) cacheStore(p listPkg, muts []*mutant.Mutant, selected map[*mutant.Mutant][]string, testHashes map[string]string, files []srcFile) {
 	var cached []cachedMutant
 	for _, m := range muts {
 		if m.Status == "" {
 			continue
 		}
 		cached = append(cached, cachedMutant{
-			ID:      m.ID(),
-			Status:  string(m.Status),
-			Killers: m.Killers,
-			Output:  tailBytes([]byte(m.Output), 4096),
+			ID:        mutantKey(m),
+			Status:    string(m.Status),
+			Killers:   m.Killers,
+			Output:    tailBytes([]byte(m.Output), 4096),
+			Tests:     selected[m],
+			TestsHash: e.mutantTestsHash(selected[m], testHashes),
 		})
 	}
 	data, err := json.Marshal(cached)
@@ -208,6 +296,25 @@ func (e *Engine) cacheStore(p listPkg, muts []*mutant.Mutant, files []srcFile) {
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		e.logf("  cache store: %v", err)
 	}
+}
+
+// sameStringSet reports whether two slices hold the same strings (order
+// matters not; callers sort selected test lists deterministically).
+func sameStringSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	ma := make(map[string]int, len(a))
+	for _, s := range a {
+		ma[s]++
+	}
+	for _, s := range b {
+		if ma[s] == 0 {
+			return false
+		}
+		ma[s]--
+	}
+	return true
 }
 
 // coverProfileLines parses a coverprofile file into line sets.

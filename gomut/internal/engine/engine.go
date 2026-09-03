@@ -18,6 +18,8 @@ package engine
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -229,8 +231,9 @@ func (e *Engine) processPackage(ctx context.Context, p listPkg) ([]*mutant.Mutan
 
 	// Per-test coverage (D3) when doing coverage-based selection.
 	var lineTests *cover.LineToTests
+	var testHashes map[string]string
 	if !e.opts.AllTests && baselineOK {
-		lineTests = e.perTestCoverage(ctx, p, wd)
+		lineTests, testHashes = e.perTestCoverage(ctx, p, wd)
 	}
 
 	// Type-check for type-aware operators (degrade on failure, D4).
@@ -319,30 +322,55 @@ func (e *Engine) processPackage(ctx context.Context, p listPkg) ([]*mutant.Mutan
 
 	// Execute pending mutants in parallel isolated subprocesses (D6),
 	// with the D7 cache.
-	e.execute(ctx, p, muts, selected, files)
+	e.execute(ctx, p, muts, selected, files, testHashes)
 
 	return muts, errs
 }
 
 // perTestCoverage runs the suite once per test function and records the
-// line-to-tests map.
-func (e *Engine) perTestCoverage(ctx context.Context, p listPkg, wd string) *cover.LineToTests {
+// line-to-tests map. It also fingerprints each test function's source so the
+// D7 cache can decide per-mutant validity incrementally (see cacheLoad).
+func (e *Engine) perTestCoverage(ctx context.Context, p listPkg, wd string) (*cover.LineToTests, map[string]string) {
 	fset := token.NewFileSet()
 	var testASTs []*ast.File
+	testHashes := map[string]string{}
 	for _, name := range p.TestGoFiles {
 		data, err := os.ReadFile(filepath.Join(p.Dir, name))
 		if err != nil {
 			continue
 		}
 		f, err := parser.ParseFile(fset, filepath.Join(p.Dir, name), data, 0)
-		if err == nil {
-			testASTs = append(testASTs, f)
+		if err != nil {
+			continue
+		}
+		testASTs = append(testASTs, f)
+		// Fingerprint every runnable test function's source span: hash the
+		// raw bytes [Pos, End) for functions matching cover.TestFuncs' rules.
+		for _, decl := range f.Decls {
+			fd, ok := decl.(*ast.FuncDecl)
+			if !ok || fd.Recv != nil {
+				continue
+			}
+			name := fd.Name.Name
+			if name == "TestMain" || !strings.HasPrefix(name, "Test") {
+				continue
+			}
+			if len(fd.Type.Params.List) != 1 {
+				continue
+			}
+			pos := fset.Position(fd.Pos()).Offset
+			end := fset.Position(fd.End()).Offset
+			if pos < 0 || end > len(data) || end <= pos {
+				continue
+			}
+			h := sha256.Sum256(data[pos:end])
+			testHashes[name] = hex.EncodeToString(h[:])[:16]
 		}
 	}
 	names := cover.TestFuncs(testASTs)
 	lt := &cover.LineToTests{}
 	if len(names) == 0 {
-		return lt
+		return lt, testHashes
 	}
 	t0 := time.Now()
 	defer func() {
@@ -408,7 +436,7 @@ func (e *Engine) perTestCoverage(ctx context.Context, p listPkg, wd string) *cov
 		}()
 	}
 	wg.Wait()
-	return lt
+	return lt, testHashes
 }
 
 // goBin returns the go binary to use.

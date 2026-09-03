@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -111,11 +112,11 @@ func TestCacheLoadPreservesDistinctMutants(t *testing.T) {
 		{Operator: "ReturnVals", Package: "example.com/foo", File: "example.com/foo/foo.go", Line: 13, Desc: "return value replaced with true (bool)", Status: mutant.Survived},
 	}
 	e := New(Options{})
-	e.cacheStore(p, muts, files)
+	e.cacheStore(p, muts, nil, nil, files)
 	// Wipe the in-memory statuses; cacheLoad must repopulate each correctly.
 	muts[0].Status = ""
 	muts[1].Status = ""
-	if !e.cacheLoad(p, muts, files) {
+	if !e.cacheLoad(p, muts, nil, nil, files) {
 		t.Fatalf("cache load: miss (expected hit)")
 	}
 	if got, want := muts[0].Status, mutant.Killed; got != want {
@@ -123,5 +124,92 @@ func TestCacheLoadPreservesDistinctMutants(t *testing.T) {
 	}
 	if got, want := muts[1].Status, mutant.Survived; got != want {
 		t.Errorf("true-return mutant status = %q, want %q", got, want)
+	}
+}
+
+// TestEngineCacheIncremental verifies that editing one test function only
+// invalidates the mutants covered by that test, not the whole package
+// (ADR-0001 D7 incrementality). The setup copies the sample module into a
+// temp directory so the fixture is not dirtied across runs.
+func TestEngineCacheIncremental(t *testing.T) {
+	if testing.Short() {
+		t.Skip("integration test: skip with -short")
+	}
+	src := filepath.Join("..", "..", "testdata", "sample")
+	absSrc, err := filepath.Abs(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Copy the module (go.mod, production code, test code) into a temp dir
+	// so we can mutate the test file freely.
+	tmp := t.TempDir()
+	for _, name := range []string{"go.mod", "math.go", "math_test.go"} {
+		in, err := os.ReadFile(filepath.Join(absSrc, name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(tmp, name), in, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+
+	run := func(log *logCapture) {
+		e := New(Options{
+			Dir:      tmp,
+			Patterns: []string{"."},
+			Workers:  2,
+			Timeout:  6 * time.Second,
+			Logf:     log.logf,
+		})
+		if _, err := e.Run(context.Background()); err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+	}
+
+	// First run: cold cache, must execute everything.
+	first := &logCapture{}
+	run(first)
+	if first.contains("cache hit") {
+		t.Fatalf("first run unexpectedly reported a cache hit")
+	}
+
+	// Mutate only TestIsPositive (the test that covers math.go:11). The
+	// inserted comment changes its source hash; the IsPositive mutants'
+	// selected-tests fingerprint changes → those mutants must be re-run.
+	// TestAbs and TestCount are untouched, so their mutants must be reused.
+	mtPath := filepath.Join(tmp, "math_test.go")
+	mt, err := os.ReadFile(mtPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	patched := bytes.Replace(mt, []byte("for _, c := range cases {"), []byte("// inc-cache-fixture: altered TestIsPositive\n\tfor _, c := range cases {"), 1)
+	if !bytes.Contains(patched, []byte("inc-cache-fixture")) {
+		t.Fatalf("test patch did not apply")
+	}
+	if err := os.WriteFile(mtPath, patched, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	second := &logCapture{}
+	run(second)
+	if !second.contains("cache hit") {
+		t.Fatalf("second run did not report a cache hit (logs=%v)", second.msg)
+	}
+	if !second.contains("(partial)") {
+		t.Fatalf("second run should report a partial cache hit (logs=%v)", second.msg)
+	}
+	// TestIsPositive covers math.go:11 → IsPositive mutants must be re-run,
+	// so their KILLED lines appear in the second run's output.
+	if !second.contains("math.go:11") {
+		t.Errorf("math.go:11 mutants should be re-run after editing TestIsPositive; logs=%v", second.msg)
+	}
+	// TestAbs is untouched → math.go:18 mutants must be reused, so their
+	// lines must NOT appear in the second run's output.
+	if second.contains("math.go:18") {
+		t.Errorf("math.go:18 mutants should be reused (TestAbs unchanged); logs=%v", second.msg)
+	}
+	// TestCount is untouched → math.go:29 mutants must be reused too.
+	if second.contains("math.go:29") {
+		t.Errorf("math.go:29 mutants should be reused (TestCount unchanged); logs=%v", second.msg)
 	}
 }
