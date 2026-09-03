@@ -233,7 +233,7 @@ func (e *Engine) processPackage(ctx context.Context, p listPkg) ([]*mutant.Mutan
 	var lineTests *cover.LineToTests
 	var testHashes map[string]string
 	if !e.opts.AllTests && baselineOK {
-		lineTests, testHashes = e.perTestCoverage(ctx, p, wd)
+		lineTests, testHashes = e.perTestCoverage(ctx, p, wd, files)
 	}
 
 	// Type-check for type-aware operators (degrade on failure, D4).
@@ -330,7 +330,7 @@ func (e *Engine) processPackage(ctx context.Context, p listPkg) ([]*mutant.Mutan
 // perTestCoverage runs the suite once per test function and records the
 // line-to-tests map. It also fingerprints each test function's source so the
 // D7 cache can decide per-mutant validity incrementally (see cacheLoad).
-func (e *Engine) perTestCoverage(ctx context.Context, p listPkg, wd string) (*cover.LineToTests, map[string]string) {
+func (e *Engine) perTestCoverage(ctx context.Context, p listPkg, wd string, files []srcFile) (*cover.LineToTests, map[string]string) {
 	fset := token.NewFileSet()
 	var testASTs []*ast.File
 	testHashes := map[string]string{}
@@ -371,6 +371,21 @@ func (e *Engine) perTestCoverage(ctx context.Context, p listPkg, wd string) (*co
 	lt := &cover.LineToTests{}
 	if len(names) == 0 {
 		return lt, testHashes
+	}
+
+	// perTestCoverage is a pure function of (production sources, test
+	// sources, go version): every per-test profile is determined by the
+	// test bodies and the line numbers of the code under test. Caching it
+	// skips the O(N) per-test "go test" subprocesses — the dominant
+	// warm-run cost — whenever nothing relevant changed. The key includes
+	// ALL production files (line numbers shift with edits) and ALL test
+	// files (test bodies decide which lines each test covers), so a stale
+	// cache can never select a wrong test subset.
+	if !e.opts.NoCache {
+		if cached := e.coverageLoad(p, files); cached != nil {
+			e.logf("perTestCoverage: %d tests from cache", len(names))
+			return cached, testHashes
+		}
 	}
 	t0 := time.Now()
 	defer func() {
@@ -436,6 +451,9 @@ func (e *Engine) perTestCoverage(ctx context.Context, p listPkg, wd string) (*co
 		}()
 	}
 	wg.Wait()
+	if !e.opts.NoCache {
+		e.coverageStore(p, files, lt)
+	}
 	return lt, testHashes
 }
 

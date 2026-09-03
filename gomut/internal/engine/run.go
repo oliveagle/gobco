@@ -196,6 +196,70 @@ func (e *Engine) mutantTestsHash(tests []string, testHashes map[string]string) s
 // per mutant via mutantTestsHash, so a change to one test does not invalidate
 // the whole package cache. (A changed production file changes every mutant,
 // so it must still force a fresh package key.)
+// coverageKey hashes production sources + test sources + go version. The
+// per-test LineToTests is a pure function of these (the test bodies decide
+// which production lines each test covers), so the key never matches a
+// stale selection. Operators are NOT in this key because perTestCoverage's
+// output does not depend on them; including them would discard the cache on
+// every operator-toggle edit without any correctness gain.
+func (e *Engine) coverageKey(p listPkg, files []srcFile) string {
+	h := sha256.New()
+	write := func(s string) { h.Write([]byte(s)); h.Write([]byte{0}) }
+	for _, f := range files {
+		write(f.name)
+		write(f.content)
+	}
+	for _, name := range p.TestGoFiles {
+		data, err := os.ReadFile(filepath.Join(p.Dir, name))
+		if err != nil {
+			continue
+		}
+		write(name)
+		write(string(data))
+	}
+	write(e.goVersionString())
+	return hex.EncodeToString(h.Sum(nil))[:16]
+}
+
+func (e *Engine) coverageCachePath(p listPkg, files []srcFile) string {
+	return filepath.Join(p.Dir, ".gomut-cache", "coverage-"+e.coverageKey(p, files)+".json")
+}
+
+// coverageLoad reads the cached LineToTests from disk. Returns nil when the
+// cache is missing, malformed, or -no-cache was given. A nil return means
+// "fall back to the O(N) per-test subprocesses" — never "give up", since a
+// stale cached selection could silently mis-classify mutants.
+func (e *Engine) coverageLoad(p listPkg, files []srcFile) *cover.LineToTests {
+	path := e.coverageCachePath(p, files)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var lt cover.LineToTests
+	if err := json.Unmarshal(data, &lt); err != nil {
+		e.logf("  coverage cache: malformed %s (re-running per-test): %v", filepath.Base(path), err)
+		return nil
+	}
+	return &lt
+}
+
+func (e *Engine) coverageStore(p listPkg, files []srcFile, lt *cover.LineToTests) {
+	if lt == nil {
+		return
+	}
+	data, err := json.Marshal(lt)
+	if err != nil {
+		return
+	}
+	path := e.coverageCachePath(p, files)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		e.logf("  coverage cache store: %v", err)
+	}
+}
+
 func (e *Engine) cacheKey(p listPkg, files []srcFile) string {
 	h := sha256.New()
 	write := func(s string) {

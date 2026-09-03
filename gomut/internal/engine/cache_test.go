@@ -255,3 +255,93 @@ func TestCacheStoreSkipsTransientBuildStatuses(t *testing.T) {
 		t.Errorf("RUN_ERROR mutant status = %q, want empty (must not be cached)", muts[2].Status)
 	}
 }
+
+// TestCoverageCache verifies the perTestCoverage cache: the O(N) per-test
+// "go test -coverprofile" subprocess phase is a pure function of
+// (production sources, test sources, go version), so an unchanged package
+// must reuse the cached LineToTests on the next run instead of re-running
+// every test in isolation. Editing a test must invalidate it.
+func TestCoverageCache(t *testing.T) {
+	if testing.Short() {
+		t.Skip("integration test: skip with -short")
+	}
+	src := filepath.Join("..", "..", "testdata", "sample")
+	absSrc, err := filepath.Abs(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmp := t.TempDir()
+	for _, name := range []string{"go.mod", "math.go", "math_test.go"} {
+		in, err := os.ReadFile(filepath.Join(absSrc, name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(tmp, name), in, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+
+	run := func(log *logCapture) {
+		e := New(Options{
+			Dir:      tmp,
+			Patterns: []string{"."},
+			Workers:  2,
+			Timeout:  6 * time.Second,
+			Logf:     log.logf,
+		})
+		if _, err := e.Run(context.Background()); err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+	}
+
+	// First run: no coverage cache, must run per-test subprocesses.
+	first := &logCapture{}
+	run(first)
+	if first.contains("tests from cache") {
+		t.Fatalf("first run unexpectedly reused the coverage cache; logs=%v", first.msg)
+	}
+	if !first.contains("perTestCoverage:") {
+		t.Fatalf("first run missing perTestCoverage log; logs=%v", first.msg)
+	}
+	// The coverage cache file must exist on disk after the first run.
+	entries, err := filepath.Glob(filepath.Join(tmp, ".gomut-cache", "coverage-*.json"))
+	if err != nil || len(entries) == 0 {
+		t.Fatalf("coverage cache not written after first run: %v (%v)", entries, err)
+	}
+
+	// Second run: identical inputs must load the coverage cache and skip
+	// the per-test subprocess phase entirely.
+	second := &logCapture{}
+	run(second)
+	if !second.contains("tests from cache") {
+		t.Fatalf("second run did not reuse the coverage cache; logs=%v", second.msg)
+	}
+	if second.contains("perTestCoverage: ") && second.contains("in ") {
+		// The "N tests in <duration>" line only appears when subprocesses ran.
+		for _, m := range second.msg {
+			if strings.Contains(m, "perTestCoverage:") && strings.Contains(m, " in ") {
+				t.Fatalf("second run re-ran per-test subprocesses: %s", m)
+			}
+		}
+	}
+
+	// Third run: edit the test file → the coverage cache key changes → the
+	// per-test subprocesses must run again (no reuse).
+	mtPath := filepath.Join(tmp, "math_test.go")
+	mt, err := os.ReadFile(mtPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	patched := bytes.Replace(mt, []byte("func TestAbs(t *testing.T) {"), []byte("// cov-cache-fixture: altered TestAbs\nfunc TestAbs(t *testing.T) {"), 1)
+	if !bytes.Contains(patched, []byte("cov-cache-fixture")) {
+		t.Fatalf("test patch did not apply")
+	}
+	if err := os.WriteFile(mtPath, patched, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	third := &logCapture{}
+	run(third)
+	if third.contains("tests from cache") {
+		t.Fatalf("third run reused the coverage cache after a test edit; logs=%v", third.msg)
+	}
+}

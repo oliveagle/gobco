@@ -1,6 +1,7 @@
 package cover
 
 import (
+	"encoding/json"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -119,5 +120,62 @@ func BenchmarkNope(b *testing.B) {}
 	want := []string{"TestAlpha"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("TestFuncs = %v, want %v", got, want)
+	}
+}
+
+func TestLineToTestsRoundTrip(t *testing.T) {
+	// Build a LineToTests with multiple files, overlapping line ranges,
+	// and two tests added in a specific order so we can verify both the
+	// per-file/per-line set semantics AND the deterministic order field
+	// survive a JSON round-trip.
+	profA := mustProfile(t, "mode: count\npkg/a.go:2.1,3.1 1 1\npkg/a.go:5.1,6.1 1 1\n")
+	profB := mustProfile(t, "mode: count\npkg/a.go:2.1,3.1 1 1\npkg/b.go:10.1,11.1 1 1\n")
+
+	orig := &LineToTests{}
+	orig.Add(profA, "TestA")
+	orig.Add(profB, "TestB")
+
+	data, err := json.Marshal(orig)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	var got LineToTests
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	check := func(file string, line int, want []string, label string) {
+		got := got.TestNamesAt(file, line)
+		if len(got) != len(want) {
+			t.Fatalf("%s: TestNamesAt(%s,%d) = %v, want %v", label, file, line, got, want)
+		}
+		for i := range got {
+			if got[i] != want[i] {
+				t.Errorf("%s: TestNamesAt(%s,%d)[%d] = %q, want %q", label, file, line, i, got[i], want[i])
+			}
+		}
+	}
+	check("pkg/a.go", 2, []string{"TestA", "TestB"}, "shared")  // both TestA + TestB cover line 2 of a.go
+	check("pkg/a.go", 3, []string{"TestA", "TestB"}, "shared-end")
+	check("pkg/a.go", 5, []string{"TestA"}, "a-only")
+	check("pkg/a.go", 6, []string{"TestA"}, "a-only-end")
+	check("pkg/b.go", 10, []string{"TestB"}, "b-only")
+	check("pkg/b.go", 11, []string{"TestB"}, "b-only-end")
+
+	// Uncovered line: empty result, no panic.
+	if names := got.TestNamesAt("pkg/a.go", 99); len(names) != 0 {
+		t.Errorf("uncovered line: got %v", names)
+	}
+
+	// Determinism: the same input marshals to the same bytes (any
+	// nondeterminism would corrupt the coverage cache key derived
+	// implicitly by humans comparing cache files).
+	data2, err := json.Marshal(orig)
+	if err != nil {
+		t.Fatalf("marshal #2: %v", err)
+	}
+	if string(data) != string(data2) {
+		t.Errorf("MarshalJSON is not deterministic")
 	}
 }

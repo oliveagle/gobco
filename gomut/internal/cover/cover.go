@@ -8,6 +8,7 @@ package cover
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -205,4 +206,65 @@ type FileLines map[string]map[int]bool
 // Contains reports whether line is covered in file.
 func (f FileLines) Contains(file string, line int) bool {
 	return f[file][line]
+}
+
+// ---- caching support ---------------------------------------------------
+
+// lineTestsJSON is the serialized form of LineToTests. byFile is
+// flattened to per-line sorted test-name lists so JSON stays compact and
+// deterministic; UnmarshalJSON reconstructs the set-of-names form.
+type lineTestsJSON struct {
+	ByFile map[string]map[int][]string `json:"byFile"`
+	Order  []string                    `json:"order"`
+}
+
+// MarshalJSON serializes LineToTests for the perTestCoverage cache. The
+// result is deterministic (per-file/per-line test lists are sorted), so a
+// cached file is byte-identical across runs with identical inputs.
+func (l *LineToTests) MarshalJSON() ([]byte, error) {
+	out := lineTestsJSON{
+		ByFile: map[string]map[int][]string{},
+		Order:  l.order,
+	}
+	for file, lines := range l.byFile {
+		lm := map[int][]string{}
+		for line, tests := range lines {
+			names := make([]string, 0, len(tests))
+			// Emit in first-added order for determinism.
+			for _, name := range l.order {
+				if tests[name] {
+					names = append(names, name)
+				}
+			}
+			lm[line] = names
+		}
+		out.ByFile[file] = lm
+	}
+	return json.Marshal(out)
+}
+
+// UnmarshalJSON restores a LineToTests previously written by MarshalJSON.
+func (l *LineToTests) UnmarshalJSON(b []byte) error {
+	var in lineTestsJSON
+	if err := json.Unmarshal(b, &in); err != nil {
+		return err
+	}
+	l.byFile = map[string]map[int]map[string]bool{}
+	l.order = in.Order
+	l.seen = map[string]bool{}
+	for _, name := range in.Order {
+		l.seen[name] = true
+	}
+	for file, lines := range in.ByFile {
+		fm := map[int]map[string]bool{}
+		for line, names := range lines {
+			sm := map[string]bool{}
+			for _, name := range names {
+				sm[name] = true
+			}
+			fm[line] = sm
+		}
+		l.byFile[file] = fm
+	}
+	return nil
 }
