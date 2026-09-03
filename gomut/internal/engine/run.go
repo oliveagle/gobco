@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/oliveagle/gobco/gomut/internal/cover"
 	gexec "github.com/oliveagle/gobco/gomut/internal/exec"
@@ -28,6 +29,7 @@ type srcFile struct {
 // workers, one isolated "go test" subprocess per mutant (ADR-0001 D6),
 // and maintains the result cache (D7).
 func (e *Engine) execute(ctx context.Context, p listPkg, muts []*mutant.Mutant, selected map[*mutant.Mutant][]string, files []srcFile) {
+	t0 := time.Now()
 	// D7 cache: hit -> reuse, else run and store.
 	if !e.opts.NoCache {
 		if e.cacheLoad(p, muts, files) {
@@ -53,6 +55,7 @@ func (e *Engine) execute(ctx context.Context, p listPkg, muts []*mutant.Mutant, 
 	if workers < 1 && len(pending) > 0 {
 		workers = 1
 	}
+	e.logf("execute: %d mutants pending across %d workers", len(pending), workers)
 	jobs := make(chan *mutant.Mutant, len(pending))
 	for _, m := range pending {
 		jobs <- m
@@ -76,6 +79,7 @@ func (e *Engine) execute(ctx context.Context, p listPkg, muts []*mutant.Mutant, 
 		}(i, wd)
 	}
 	wg.Wait()
+	e.logf("execute: %d mutants in %s", len(pending), time.Since(t0).Round(time.Millisecond))
 
 	if !e.opts.NoCache {
 		e.cacheStore(p, muts, files)

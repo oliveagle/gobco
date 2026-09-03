@@ -61,8 +61,9 @@ func TestVersionFlagPrintsVersion(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0 (stderr=%q)", code, stderr)
 	}
-	if got := strings.TrimSpace(stdout); got != "gomut 0.2.0" {
-		t.Errorf("stdout = %q, want %q", got, "gomut 0.2.0")
+	want := "gomut " + version
+	if got := strings.TrimSpace(stdout); got != want {
+		t.Errorf("stdout = %q, want %q", got, want)
 	}
 	if strings.TrimSpace(stderr) != "" {
 		t.Errorf("stderr = %q, want empty", stderr)

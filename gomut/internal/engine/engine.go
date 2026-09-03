@@ -31,6 +31,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/oliveagle/gobco/gomut/internal/cover"
@@ -340,29 +341,73 @@ func (e *Engine) perTestCoverage(ctx context.Context, p listPkg, wd string) *cov
 	}
 	names := cover.TestFuncs(testASTs)
 	lt := &cover.LineToTests{}
-	for i, name := range names {
-		out := filepath.Join(wd, fmt.Sprintf("test-%03d.out", i))
-		r := gexec.Run(ctx, gexec.TestRun{
-			Dir:          p.Dir,
-			Pkg:          p.ImportPath,
-			Tests:        []string{name},
-			CoverProfile: out,
-			Timeout:      e.opts.Timeout,
-			GoBin:        e.goBin(),
-		})
-		if r.Status == mutant.TimedOut {
-			e.logf("  test %s timed out in isolation; its coverage is incomplete", name)
-			continue
-		}
-		if r.Status == mutant.Killed {
-			e.logf("  test %s fails on its own; its coverage may be partial", name)
-		}
-		if data, err := os.ReadFile(out); err == nil {
-			if prof, err := cover.ParseProfile(data); err == nil {
-				lt.Add(prof, name)
-			}
-		}
+	if len(names) == 0 {
+		return lt
 	}
+	t0 := time.Now()
+	defer func() {
+		e.logf("perTestCoverage: %d tests in %s", len(names), time.Since(t0).Round(time.Millisecond))
+	}()
+
+	// Parallelize the per-test runs across the worker pool. Each run is an
+	// independent "go test -run=^TestX$ -coverprofile" subprocess; the Go
+	// build cache makes all but the first cheap, so wall time here is
+	// dominated by process scheduling, not compilation. Running them in
+	// parallel on a quiet host cuts this phase from O(N) to O(N/workers)
+	// wall time (N = number of test functions).
+	workers := e.opts.Workers
+	if workers > len(names) {
+		workers = len(names)
+	}
+	if workers < 1 {
+		workers = 1
+	}
+
+	var mu sync.Mutex // guards lt.Add (LineToTests is not concurrency-safe)
+	jobs := make(chan int, len(names))
+	for i := range names {
+		jobs <- i
+	}
+	close(jobs)
+
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range jobs {
+				name := names[i]
+				out := filepath.Join(wd, fmt.Sprintf("test-%03d.out", i))
+				r := gexec.Run(ctx, gexec.TestRun{
+					Dir:          p.Dir,
+					Pkg:          p.ImportPath,
+					Tests:        []string{name},
+					CoverProfile: out,
+					Timeout:      e.opts.Timeout,
+					GoBin:        e.goBin(),
+				})
+				if r.Status == mutant.TimedOut {
+					e.logf("  test %s timed out in isolation; its coverage is incomplete", name)
+					continue
+				}
+				if r.Status == mutant.Killed {
+					e.logf("  test %s fails on its own; its coverage may be partial", name)
+				}
+				data, err := os.ReadFile(out)
+				if err != nil {
+					continue
+				}
+				prof, err := cover.ParseProfile(data)
+				if err != nil {
+					continue
+				}
+				mu.Lock()
+				lt.Add(prof, name)
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
 	return lt
 }
 
