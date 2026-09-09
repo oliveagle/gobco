@@ -80,10 +80,10 @@ func (g *gobco) parseOptions(argv []string) []string {
 		"at finish, print also those conditions that are fully covered")
 	flags.StringVar(&g.statsFilename, "stats", "",
 		"load and persist the JSON coverage data to this `file`")
-	flags.Var(newSliceFlag(&g.goTestArgs), "test",
-		"pass the `option` to \"go test\", such as -vet=off")
+	flags.BoolVar(&g.verbose, "v", false,
+		"verbose output")
 	flags.BoolVar(&g.verbose, "verbose", false,
-		"show progress messages")
+		"verbose output (alias of -v)")
 	flags.BoolVar(&g.coverTest, "cover-test", false,
 		"cover the test code as well")
 	flags.BoolVar(&ver, "version", false,
@@ -92,7 +92,7 @@ func (g *gobco) parseOptions(argv []string) []string {
 	flags.SetOutput(g.stderr)
 	flags.Usage = func() {
 		_, _ = fmt.Fprintf(flags.Output(),
-			"usage: %s [options] package...\n", flags.Name())
+			"usage: %s [options] [packages...] [--] [go test flags...]\n", flags.Name())
 		flags.PrintDefaults()
 		g.exitCode = 2
 	}
@@ -118,21 +118,105 @@ func (g *gobco) parseOptions(argv []string) []string {
 }
 
 func (g *gobco) parseArgs(args []string) {
-	if len(args) == 0 {
-		args = []string{"."}
+	pkgArgs, goTestFlags := splitPkgsAndGoTestFlags(args)
+	g.goTestArgs = goTestFlags
+
+	if len(pkgArgs) == 0 {
+		pkgArgs = []string{"."}
 	}
 
-	assert(len(args) <= 1, "checking multiple packages doesn't work yet")
-
-	for _, arg := range args {
-		arg = filepath.FromSlash(arg)
-		g.args = append(g.args, g.classify(arg))
+	for _, arg := range pkgArgs {
+		g.args = append(g.args, g.expandAndClassify(filepath.FromSlash(arg))...)
 	}
 }
 
-// classify determines how to handle the argument, depending on whether it is
+// splitPkgsAndGoTestFlags splits args into packages and go test flags.
+// Non-flag args before any flag arg (or before --) are packages.
+// Everything after -- is a go test flag.
+func splitPkgsAndGoTestFlags(args []string) (pkgs, goTestFlags []string) {
+	for i, arg := range args {
+		if arg == "--" {
+			return args[:i], args[i+1:]
+		}
+	}
+
+	i := 0
+	for i < len(args) && !strings.HasPrefix(args[i], "-") {
+		i++
+	}
+	return args[:i], args[i:]
+}
+
+func (g *gobco) expandAndClassify(arg string) []argInfo {
+	if isRecursivePattern(arg) {
+		return g.expandRecursive(arg)
+	}
+	return []argInfo{g.classifySingle(arg)}
+}
+
+func isRecursivePattern(arg string) bool {
+	return arg == "..." || strings.HasSuffix(arg, "/...")
+}
+
+func (g *gobco) expandRecursive(pattern string) []argInfo {
+	baseDir := strings.TrimSuffix(pattern, "/...")
+	if baseDir == "" || baseDir == "." {
+		baseDir = "."
+	}
+
+	moduleRoot, _ := g.findInModule(baseDir)
+	if moduleRoot == "" {
+		g.check(fmt.Errorf("error: pattern %q must be inside a Go module", pattern))
+	}
+
+	absModuleRoot, err := filepath.Abs(moduleRoot)
+	g.check(err)
+
+	// Run from the current working directory (not absDir): relative
+	// patterns such as "./testdata/..." must resolve the same way
+	// they do in classifySingle/findInModule and in a plain `go list`.
+	cmd := exec.Command("go", "list", "-find", "-e", "-f", "{{.Dir}}", pattern)
+	out, err := cmd.Output()
+	if err != nil {
+		g.check(fmt.Errorf("error running 'go list %s': %w", pattern, err))
+	}
+
+	dirs := strings.Fields(string(out))
+	if len(dirs) == 0 {
+		g.errf("warning: pattern %q matched no packages", pattern)
+		return nil
+	}
+	seen := make(map[string]bool, len(dirs))
+	for i, dir := range dirs {
+		if seen[dir] {
+			dirs = append(dirs[:i], dirs[i+1:]...)
+			i--
+		}
+		seen[dir] = true
+	}
+
+	copyDst := "module-" + randomHex(8)
+	var results []argInfo
+	for _, dir := range dirs {
+		rel, err := filepath.Rel(absModuleRoot, dir)
+		g.check(err)
+
+		results = append(results, argInfo{
+			arg:       filepath.ToSlash(rel),
+			argDir:    dir,
+			module:    true,
+			copySrc:   absModuleRoot,
+			copyDst:   copyDst,
+			instrFile: "",
+			instrDir:  filepath.Join(copyDst, rel),
+		})
+	}
+	return results
+}
+
+// classifySingle determines how to handle the argument, depending on whether it is
 // a single file or directory, and whether it is located in a Go module or not.
-func (g *gobco) classify(arg string) argInfo {
+func (g *gobco) classifySingle(arg string) argInfo {
 	st, err := os.Stat(arg)
 	isDir := err == nil && st.IsDir()
 
@@ -242,35 +326,44 @@ func (g *gobco) prepareTmp() {
 		g.statsFilename = g.file("gobco-counts.json")
 	}
 
-	// TODO: Research how "package/..." is handled by other go commands.
+	copied := make(map[string]bool)
 	for _, arg := range g.args {
 		dstDir := g.file(arg.copyDst)
+		key := arg.copySrc + " -> " + dstDir
+		if copied[key] {
+			continue
+		}
+		copied[key] = true
 		g.check(copyDir(arg.copySrc, dstDir))
 	}
 }
 
 func (g *gobco) instrument() bool {
-	in := instrumenter{
-		g.branch,
-		g.coverTest,
-		g.immediately,
-		g.listAll,
-		false,
-		nil,
-		map[*ast.Package]*types.Package{},
-		map[ast.Expr]types.Type{},
-		nil,
-		0,
-		map[ast.Expr]bool{},
-		map[ast.Expr]*exprSubst{},
-		map[ast.Stmt]*ast.Stmt{},
-		map[ast.Stmt]ast.Stmt{},
-		false,
-		nil,
-	}
-
 	found := false
 	for _, arg := range g.args {
+		// A fresh instrumenter per package: the instrumenter
+		// accumulates the conditions it finds (i.conds) and writes
+		// them into the generated gobco_variable.go, so a shared
+		// instance would leak one package's conditions into every
+		// other package's stats.
+		in := instrumenter{
+			g.branch,
+			g.coverTest,
+			g.immediately,
+			g.listAll,
+			false,
+			nil,
+			map[*ast.Package]*types.Package{},
+			map[ast.Expr]types.Type{},
+			nil,
+			0,
+			map[ast.Expr]bool{},
+			map[ast.Expr]*exprSubst{},
+			map[ast.Stmt]*ast.Stmt{},
+			map[ast.Stmt]ast.Stmt{},
+			false,
+			nil,
+		}
 		instrDst := g.file(arg.instrDir)
 		if in.instrument(arg.argDir, arg.instrFile, instrDst) {
 			found = true
@@ -286,45 +379,128 @@ func (g *gobco) runGoTest() {
 		if !arg.module {
 			gopaths = g.gopaths()
 		}
-		g.exitCode = goTest{}.run(
+		if rc := (goTest{}).run(
 			arg,
 			g.goTestArgs,
 			g.verbose,
 			gopaths,
-			g.statsFilename,
+			g.statsFileFor(arg),
 			&g.buildEnv,
-		)
+		); rc != 0 {
+			// First failure wins: with multiple packages a later
+			// successful run must not clear an earlier failure.
+			g.exitCode = rc
+		}
 	}
 }
 
-func (g *gobco) printOutput() {
-	conds, err := g.load(g.statsFilename)
-	if err != nil && g.exitCode != 0 {
-		return // skip silently
+// statsFileFor returns the stats file for arg's test run. The
+// injected TestMain assumes the file holds exactly the counters
+// of its own package (it panics otherwise), so each package gets
+// its own file. With a single package this is the plain stats
+// file, so -stats accumulation across runs works exactly as
+// before. With multiple packages the suffix is the package's
+// relative path (sanitized), which is stable across runs, so
+// -stats still accumulates per package.
+func (g *gobco) statsFileFor(arg argInfo) string {
+	if len(g.args) == 1 {
+		return g.statsFilename
 	}
-	if err != nil {
-		g.logger.errf("%s", err)
+	suffix := strings.NewReplacer("/", "_", ".", "_", ":", "_").Replace(arg.arg)
+	return g.statsFilename + "." + suffix
+}
+
+func (g *gobco) printOutput() {
+	var files []string
+	if len(g.args) == 1 {
+		files = []string{g.statsFilename}
+	} else {
+		for _, arg := range g.args {
+			files = append(files, g.statsFileFor(arg))
+		}
 	}
 
-	cnt := 0
-	for _, c := range conds {
-		if c.TrueCount > 0 {
-			cnt++
+	var conds []condition
+	var lastErr error
+	for _, file := range files {
+		c, err := g.load(file)
+		if err != nil {
+			// A missing file means the package's tests never ran
+			// (or the run failed before persisting); its conditions
+			// are simply absent from the summary.
+			lastErr = err
+			continue
 		}
-		if c.FalseCount > 0 {
-			cnt++
+		conds = append(conds, c...)
+	}
+	if len(conds) == 0 && lastErr != nil {
+		if g.exitCode != 0 {
+			return // skip silently
 		}
+		g.logger.errf("%s", lastErr)
 	}
 
 	kind := "Condition coverage"
 	if g.branch {
 		kind = "Branch coverage"
 	}
+
+	totalCov := 0
+	for _, c := range conds {
+		if c.TrueCount > 0 {
+			totalCov++
+		}
+		if c.FalseCount > 0 {
+			totalCov++
+		}
+	}
+	totalCond := len(conds) * 2
+
+	pct := 0.0
+	if totalCond > 0 {
+		pct = float64(totalCov) / float64(totalCond) * 100
+	}
+
 	g.outf("")
-	g.outf("%s: %d/%d", kind, cnt, len(conds)*2)
+	g.outf("%s: %d/%d (%.1f%%)", kind, totalCov, totalCond, pct)
+
+	// Group conditions by file for per-file summary.
+	type fileStat struct{ covered, total int }
+	byFile := map[string]*fileStat{}
+	var fileOrder []string
+	for _, c := range conds {
+		file := c.Start
+		if idx := strings.IndexByte(file, ':'); idx >= 0 {
+			file = file[:idx]
+		}
+		fs, ok := byFile[file]
+		if !ok {
+			fs = &fileStat{}
+			byFile[file] = fs
+			fileOrder = append(fileOrder, file)
+		}
+		fs.total += 2
+		if c.TrueCount > 0 {
+			fs.covered++
+		}
+		if c.FalseCount > 0 {
+			fs.covered++
+		}
+	}
 
 	for _, cond := range conds {
 		g.printCond(cond)
+	}
+
+	g.outf("")
+	g.outf("Per-file coverage:")
+	for _, file := range fileOrder {
+		fs := byFile[file]
+		fpct := 0.0
+		if fs.total > 0 {
+			fpct = float64(fs.covered) / float64(fs.total) * 100
+		}
+		g.outf("  %s: %d/%d (%.1f%%)", file, fs.covered, fs.total, fpct)
 	}
 }
 

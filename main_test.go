@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"log"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -166,21 +167,23 @@ func Test_gobco_parseCommandLine__go_test_options(t *testing.T) {
 
 	g := s.newGobco()
 
-	g.parseCommandLine([]string{"gobco", "-test", "-vet=off", "-test", "help", "pkg"})
+	g.parseCommandLine([]string{"gobco", "testdata/failing", "-vet=off"})
 
 	s.CheckEquals(g.exitCode, 0)
-	s.CheckEquals(g.goTestArgs, []string{"-vet=off", "help"})
+	s.CheckEquals(len(g.args), 1)
+	s.CheckEquals(g.goTestArgs, []string{"-vet=off"})
 }
 
 func Test_gobco_parseCommandLine__two_packages(t *testing.T) {
 	s := NewSuite(t)
 	defer s.TearDownTest()
 
-	var g gobco
+	g := s.newGobco()
 
-	s.CheckPanics(
-		func() { g.parseCommandLine([]string{"gobco", "pkg1", "pkg2"}) },
-		"checking multiple packages doesn't work yet")
+	g.parseCommandLine([]string{"gobco", "testdata/failing", "testdata/branch"})
+
+	s.CheckEquals(g.exitCode, 0)
+	s.CheckEquals(len(g.args), 2)
 }
 
 func Test_gobco_parseCommandLine__usage(t *testing.T) {
@@ -196,7 +199,7 @@ func Test_gobco_parseCommandLine__usage(t *testing.T) {
 	s.CheckEquals(s.Stdout(), "")
 	s.CheckEquals(s.Stderr(), ""+
 		"flag provided but not defined: -invalid\n"+
-		"usage: gobco [options] package...\n"+
+		"usage: gobco [options] [packages...] [--] [go test flags...]\n"+
 		"  -branch\n"+
 		"    \tcover branches, not conditions\n"+
 		"  -cover-test\n"+
@@ -211,10 +214,9 @@ func Test_gobco_parseCommandLine__usage(t *testing.T) {
 		"    \tat finish, print also those conditions that are fully covered\n"+
 		"  -stats file\n"+
 		"    \tload and persist the JSON coverage data to this file\n"+
-		"  -test option\n"+
-		"    \tpass the option to \"go test\", such as -vet=off\n"+
+		"  -v\tverbose output\n"+
 		"  -verbose\n"+
-		"    \tshow progress messages\n"+
+		"    \tverbose output (alias of -v)\n"+
 		"  -version\n"+
 		"    \tprint the gobco version\n")
 }
@@ -232,7 +234,7 @@ func Test_gobco_parseCommandLine__help(t *testing.T) {
 		exited(0))
 
 	s.CheckEquals(stdout.String(), ""+
-		"usage: gobco [options] package...\n"+
+		"usage: gobco [options] [packages...] [--] [go test flags...]\n"+
 		"  -branch\n"+
 		"    \tcover branches, not conditions\n"+
 		"  -cover-test\n"+
@@ -247,10 +249,9 @@ func Test_gobco_parseCommandLine__help(t *testing.T) {
 		"    \tat finish, print also those conditions that are fully covered\n"+
 		"  -stats file\n"+
 		"    \tload and persist the JSON coverage data to this file\n"+
-		"  -test option\n"+
-		"    \tpass the option to \"go test\", such as -vet=off\n"+
+		"  -v\tverbose output\n"+
 		"  -verbose\n"+
-		"    \tshow progress messages\n"+
+		"    \tverbose output (alias of -v)\n"+
 		"  -version\n"+
 		"    \tprint the gobco version\n")
 	s.CheckEquals(stderr.String(), "")
@@ -384,7 +385,7 @@ func Test_gobco_cleanup(t *testing.T) {
 	defer s.TearDownTest()
 
 	g := s.newGobco()
-	g.parseCommandLine([]string{"gobco", "-verbose", "testdata/failing"})
+	g.parseCommandLine([]string{"gobco", "-v", "testdata/failing"})
 	g.prepareTmp()
 
 	g.instrument()
@@ -410,7 +411,7 @@ func Test_gobcoMain__test_fails(t *testing.T) {
 	s := NewSuite(t)
 	defer s.TearDownTest()
 
-	actualExitCode := gobcoMain(&s.out, &s.err, "gobco", "-verbose", "testdata/failing")
+	actualExitCode := gobcoMain(&s.out, &s.err, "gobco", "-v", "testdata/failing")
 	s.CheckEquals(actualExitCode, 1)
 
 	stdout := s.Stdout()
@@ -430,10 +431,13 @@ func Test_gobcoMain__single_file(t *testing.T) {
 	s.CheckNotContains(stdout, "[build failed]")
 	s.CheckNotContains(stderr, "[build failed]")
 	s.CheckEquals(s.GobcoLines(stdout), []string{
-		"Condition coverage: 5/6",
+		"Condition coverage: 5/6 (83.3%)",
 		"testdata/failing/fail.go:4:14: condition \"i < 10\" was 10 times true and once false",
 		"testdata/failing/fail.go:7:6: condition \"a < 1000\" was 5 times true and once false",
 		"testdata/failing/fail.go:10:5: condition \"Bar(a) == 10\" was once false but never true",
+		"",
+		"Per-file coverage:",
+		"  testdata/failing/fail.go: 5/6 (83.3%)",
 		// testdata/failing/random.go is not listed here
 		// since that file is not mentioned in the command line.
 	})
@@ -450,11 +454,15 @@ func Test_gobcoMain__multiple_files(t *testing.T) {
 	s.CheckNotContains(stderr, "[build failed]")
 	// Ensure that the files in the output are sorted.
 	s.CheckEquals(s.GobcoLines(stdout), []string{
-		"Condition coverage: 5/8",
+		"Condition coverage: 5/8 (62.5%)",
 		"testdata/failing/fail.go:4:14: condition \"i < 10\" was 10 times true and once false",
 		"testdata/failing/fail.go:7:6: condition \"a < 1000\" was 5 times true and once false",
 		"testdata/failing/fail.go:10:5: condition \"Bar(a) == 10\" was once false but never true",
 		"testdata/failing/random.go:8:9: condition \"x == 4\" was never evaluated",
+		"",
+		"Per-file coverage:",
+		"  testdata/failing/fail.go: 5/6 (83.3%)",
+		"  testdata/failing/random.go: 0/2 (0.0%)",
 	})
 }
 
@@ -462,13 +470,16 @@ func Test_gobcoMain__TestMain(t *testing.T) {
 	s := NewSuite(t)
 	defer s.TearDownTest()
 
-	stdout, stderr := s.RunMain(0, "gobco", "-verbose", "testdata/testmain")
+	stdout, stderr := s.RunMain(0, "gobco", "-v", "testdata/testmain")
 
 	s.CheckNotContains(stdout, "[build failed]")
 	s.CheckEquals(s.GobcoLines(stdout), []string{
-		"Condition coverage: 1/2",
+		"Condition coverage: 1/2 (50.0%)",
 		"testdata/testmain/main.go:8:9: " +
 			"condition \"i > 0\" was once true but never false",
+		"",
+		"Per-file coverage:",
+		"  testdata/testmain/main.go: 1/2 (50.0%)",
 	})
 	s.CheckContains(stdout, "begin original TestMain")
 	s.CheckContains(stdout, "end original TestMain")
@@ -479,7 +490,7 @@ func Test_gobcoMain__TestMainTest(t *testing.T) {
 	s := NewSuite(t)
 	defer s.TearDownTest()
 
-	stdout, stderr := s.RunMain(0, "gobco", "-verbose", "testdata/testmaintest")
+	stdout, stderr := s.RunMain(0, "gobco", "-v", "testdata/testmaintest")
 
 	s.CheckContains(stdout, "Condition coverage: 1/2")
 	_ = stderr
@@ -491,7 +502,7 @@ func Test_gobcoMain__oddeven(t *testing.T) {
 
 	stdout, stderr := s.RunMain(0, "gobco", "testdata/oddeven")
 
-	s.CheckContains(stdout, "Condition coverage: 0/2")
+	s.CheckContains(stdout, "Condition coverage: 0/2 (0.0%)")
 	s.CheckContains(stdout, "odd.go:4:9: condition \"x%2 != 0\" was never evaluated")
 	// The condition in even_test.go is not instrumented since
 	// gobco was not run with the '-cover-test' option.
@@ -505,7 +516,7 @@ func Test_gobcoMain__blackBox(t *testing.T) {
 	stdout, stderr := s.RunMain(0, "gobco", "-cover-test", "testdata/pkgname")
 
 	s.CheckEquals(s.GobcoLines(stdout), []string{
-		"Condition coverage: 4/8",
+		"Condition coverage: 4/8 (50.0%)",
 		"testdata/pkgname/main.go:4:5: " +
 			"condition \"cond\" was once true but never false",
 		"testdata/pkgname/main.go:11:5: " +
@@ -516,6 +527,11 @@ func Test_gobcoMain__blackBox(t *testing.T) {
 		"testdata/pkgname/black_box_test.go:12:5: " +
 			"condition \"pkgname.Exported(true) != 'E'\" " +
 			"was once false but never true",
+		"",
+		"Per-file coverage:",
+		"  testdata/pkgname/main.go: 2/4 (50.0%)",
+		"  testdata/pkgname/white_box_test.go: 1/2 (50.0%)",
+		"  testdata/pkgname/black_box_test.go: 1/2 (50.0%)",
 	})
 	s.CheckEquals(stderr, "")
 }
@@ -527,7 +543,7 @@ func Test_gobcoMain__condition(t *testing.T) {
 	stdout, stderr := s.RunMain(0, "gobco", "./testdata/branch")
 
 	s.CheckEquals(s.GobcoLines(stdout), []string{
-		"Condition coverage: 0/12",
+		"Condition coverage: 0/12 (0.0%)",
 		"testdata/branch/branch.go:6:5: " +
 			"condition \"x > 0\" was never evaluated",
 		"testdata/branch/branch.go:6:14: " +
@@ -540,6 +556,9 @@ func Test_gobcoMain__condition(t *testing.T) {
 			"condition \"x == 30\" was never evaluated",
 		"testdata/branch/branch.go:12:15: " +
 			"condition \"x == 40\" was never evaluated",
+		"",
+		"Per-file coverage:",
+		"  testdata/branch/branch.go: 0/12 (0.0%)",
 	})
 	s.CheckEquals(stderr, "")
 }
@@ -551,7 +570,7 @@ func Test_gobcoMain__branch(t *testing.T) {
 	stdout, stderr := s.RunMain(0, "gobco", "-branch", "./testdata/branch")
 
 	s.CheckEquals(s.GobcoLines(stdout), []string{
-		"Branch coverage: 0/10",
+		"Branch coverage: 0/10 (0.0%)",
 		"testdata/branch/branch.go:6:5: " +
 			"condition \"x > 0 && x > 100\" was never evaluated",
 		"testdata/branch/branch.go:10:7: " +
@@ -562,6 +581,9 @@ func Test_gobcoMain__branch(t *testing.T) {
 			"condition \"x == 30\" was never evaluated",
 		"testdata/branch/branch.go:12:15: " +
 			"condition \"x == 40\" was never evaluated",
+		"",
+		"Per-file coverage:",
+		"  testdata/branch/branch.go: 0/10 (0.0%)",
 	})
 	s.CheckEquals(stderr, "")
 }
@@ -573,9 +595,96 @@ func Test_gobcoMain__issue38(t *testing.T) {
 	stdout, stderr := s.RunMain(0, "gobco", "./testdata/issue38")
 
 	s.CheckEquals(s.GobcoLines(stdout), []string{
-		"Condition coverage: 1/2",
+		"Condition coverage: 1/2 (50.0%)",
 		"testdata/issue38/main.go:4:5: " +
 			"condition \"a >= 0\" was 2 times true but never false",
+		"",
+		"Per-file coverage:",
+		"  testdata/issue38/main.go: 1/2 (50.0%)",
 	})
+	s.CheckEquals(stderr, "")
+}
+
+// writeRecModule writes a small two-package module (root package and a
+// sub package, one condition each) into dir. If subTestFails is true,
+// the sub package's test calls its function once and then fails.
+func writeRecModule(dir string, subTestFails bool) {
+	files := map[string]string{
+		"go.mod":       "module recmod\n\ngo 1.16\n",
+		"root.go":      "package recmod\n\nfunc RootSign(x int) int {\n\tif x > 0 {\n\t\treturn 1\n\t}\n\treturn -1\n}\n",
+		"root_test.go": "package recmod\n\nimport \"testing\"\n\nfunc TestRootSign(t *testing.T) {\n\tif RootSign(1) != 1 || RootSign(-1) != -1 {\n\t\tt.Fatal(\"bad sign\")\n\t}\n}\n",
+		"sub/sub.go":   "package sub\n\nfunc SubAbs(x int) int {\n\tif x < 0 {\n\t\treturn -x\n\t}\n\treturn x\n}\n",
+	}
+	subTest := "package sub\n\nimport \"testing\"\n\nfunc TestSubAbs(t *testing.T) {\n\tif SubAbs(-3) != 3 || SubAbs(3) != 3 {\n\t\tt.Fatal(\"bad abs\")\n\t}\n}\n"
+	if subTestFails {
+		subTest = "package sub\n\nimport \"testing\"\n\nfunc TestSubAbs(t *testing.T) {\n\tSubAbs(-3)\n\tt.Fatal(\"intentional failure\")\n}\n"
+	}
+	files["sub/sub_test.go"] = subTest
+
+	for name, content := range files {
+		path := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			panic(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			panic(err)
+		}
+	}
+}
+
+// chdir changes the working directory to dir for the duration of the
+// test, restoring it afterwards.
+func (s *Suite) chdir(dir string) {
+	old, err := os.Getwd()
+	s.CheckEquals(err, nil)
+	if err != nil {
+		s.t.FailNow()
+	}
+	if err := os.Chdir(dir); err != nil {
+		s.t.Fatal(err)
+	}
+	s.t.Cleanup(func() { _ = os.Chdir(old) })
+}
+
+func Test_gobcoMain__recursivePattern(t *testing.T) {
+	s := NewSuite(t)
+	defer s.TearDownTest()
+
+	dir := t.TempDir()
+	writeRecModule(dir, false)
+	s.chdir(dir)
+
+	stdout, stderr := s.RunMain(0, "gobco", "./...")
+
+	s.CheckContains(stdout, "Condition coverage: 4/4 (100.0%)")
+	s.CheckContains(stdout, "root.go: 2/2 (100.0%)")
+	s.CheckContains(stdout, "sub/sub.go: 2/2 (100.0%)")
+	s.CheckEquals(stderr, "")
+}
+
+func Test_gobcoMain__recursivePatternFailingPackage(t *testing.T) {
+	s := NewSuite(t)
+	defer s.TearDownTest()
+
+	dir := t.TempDir()
+	writeRecModule(dir, true)
+	s.chdir(dir)
+
+	stdout, stderr := s.RunMain(1, "gobco", "./...")
+
+	s.CheckContains(stdout, "Condition coverage: 3/4 (75.0%)")
+	s.CheckContains(stdout, "root.go: 2/2 (100.0%)")
+	s.CheckContains(stdout, "sub/sub.go: 1/2 (50.0%)")
+	s.CheckContains(stdout, "condition \"x < 0\" was once true but never false")
+	s.CheckContains(stderr, "go test sub: exit status 1")
+}
+
+func Test_gobcoMain__goTestFlagPassthrough(t *testing.T) {
+	s := NewSuite(t)
+	defer s.TearDownTest()
+
+	stdout, stderr := s.RunMain(0, "gobco", "testdata/oddeven", "--", "-v")
+
+	s.CheckContains(stdout, "=== RUN   TestDummy")
 	s.CheckEquals(stderr, "")
 }

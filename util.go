@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
 func copyDir(src string, dst string) error {
@@ -73,26 +72,6 @@ func randomHex(n int) string {
 		panic(err)
 	}
 	return fmt.Sprintf("%x", rnd)
-}
-
-type sliceFlag struct {
-	values *[]string
-}
-
-func newSliceFlag(values *[]string) *sliceFlag {
-	return &sliceFlag{values}
-}
-
-func (s *sliceFlag) String() string {
-	if s.values == nil {
-		return ""
-	}
-	return strings.Join(*s.values, ", ")
-}
-
-func (s *sliceFlag) Set(str string) error {
-	*s.values = append(*s.values, str)
-	return nil
 }
 
 func ok(err error) {
