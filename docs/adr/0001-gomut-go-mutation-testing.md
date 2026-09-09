@@ -168,3 +168,16 @@ gomut [flags] [packages...]
 - pitest 算子: `submodules/pitest/pitest/src/main/java/org/pitest/mutationtest/engine/gregor/mutators/`
 - pitest 结果模型: `DetectionStatus.java` / `MutationStatisticsPrecursor.java`
 - gobco（分支覆盖，互补工具）: 仓库根
+
+## 9. 补注（gomut 0.3.0，2026-09-09，commit a84e346）
+
+- D5 分数落地为 `detected / (total − NO_COVERAGE − INVALID)`：新增 **INVALID** 状态，
+  承接上文风险项"变异破坏编译 → 剔除该 mutant 不计入分母"（实现上不做 `_ = x` 自动
+  修复，而是直接判 INVALID 并写缓存——它对给定源码是确定性的）。`COMPILE_ERROR` 只保留
+  "构建环境瞬时故障"语义（不进缓存，下次运行重试）。
+- 测试失败证据（`--- FAIL:`、`FAIL pkg <duration>`、行首 `panic: `）优先于环境启发式；
+  env 正则锚定行首的 go 命令错误（`go: ` / module / package / revision），失败测试消息
+  里出现的 "no such file or directory" 等字符串不再触发 RUN_ERROR（zvec-go 实测一批
+  19 个此类误判全部修复：14+5 个 KILLED 证据不再被丢弃）。
+- 报告新增 per-mutant 测试选择模式记录（`all-tests` | `coverage-selected`）：coverage
+  选择下幸存的 mutant 可能是选择产物，mode 是解读分数的一部分。
