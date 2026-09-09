@@ -8,8 +8,10 @@ import (
 	"go/ast"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -17,6 +19,10 @@ import (
 	gexec "github.com/oliveagle/gobco/gomut/internal/exec"
 	"github.com/oliveagle/gobco/gomut/internal/mutant"
 )
+
+// reGoDiagnostic matches the ":line:col:" position part of a compiler
+// diagnostic line.
+var reGoDiagnostic = regexp.MustCompile(`:[0-9]+:[0-9]+:`)
 
 // srcFile is a parsed production file of the package under test.
 type srcFile struct {
@@ -113,7 +119,42 @@ func (e *Engine) runMutant(ctx context.Context, wd string, m *mutant.Mutant, tes
 		Timeout:     e.opts.Timeout,
 		GoBin:       e.goBin(),
 	})
-	e.mark(m, r.Status, r.Failures, r.Output)
+	e.mark(m, refineBuildFailure(r, m), r.Failures, r.Output)
+}
+
+// refineBuildFailure sharpens a COMPILE_ERROR into INVALID when the
+// compiler diagnostics point at the file this mutant patched. The
+// unmutated baseline is known to compile (processPackage refuses to
+// run mutants otherwise), so a build failure inside the patched
+// file is caused by the mutation itself - the classic case is a
+// ReturnVals rewrite of one value of a comma-ok return ("v, ok :=
+// ...; return v, ok" -> "return v, false"), which leaves the other
+// value unused and Go rejects. Such mutants are deterministic for a
+// given source: they are cached and excluded from the score
+// denominator.
+//
+// A build failure without a diagnostic in the patched file (e.g. a
+// build cache eviction under load) stays COMPILE_ERROR and is
+// retried on a later run (it is not cached).
+func refineBuildFailure(r gexec.Result, m *mutant.Mutant) mutant.Status {
+	if r.Status != mutant.CompileError || !diagnosticReferences(r.Output, m.FileName) {
+		return r.Status
+	}
+	return mutant.Invalid
+}
+
+// diagnosticReferences reports whether any line of a build-failed
+// output is a compiler diagnostic for file. Go diagnostics look
+// like "path/to/file.go:12:34: message"; the path may be the
+// original one or the overlay's replacement path, so the file name
+// is the reliable part.
+func diagnosticReferences(output, file string) bool {
+	for _, line := range strings.Split(output, "\n") {
+		if strings.Contains(line, file+":") && reGoDiagnostic.MatchString(line) {
+			return true
+		}
+	}
+	return false
 }
 
 func (e *Engine) mark(m *mutant.Mutant, st mutant.Status, killers []string, output string) {
@@ -347,6 +388,8 @@ func (e *Engine) cacheStore(p listPkg, muts []*mutant.Mutant, selected map[*muta
 		// run retry, and stops a host hiccup from poisoning the incremental
 		// cache (which would otherwise keep the degraded score across test
 		// edits).
+		// (INVALID, by contrast, is deterministic - the patch itself does
+		// not compile - and is cached like KILLED/SURVIVED.)
 		if m.Status == mutant.CompileError || m.Status == mutant.RunError {
 			continue
 		}

@@ -29,6 +29,14 @@ func TestClassify(t *testing.T) {
 		{"env-error", "go: no required module provides package foo; to add it:\n\tgo get foo\n", false, mutant.RunError, nil},
 		{"no-tests-to-run", "ok\tpkg\t0.001s\n  (no tests to run)\n", false, mutant.NoCoverage, nil},
 		{"timed-out", "--- FAIL: whatever\n", true, mutant.TimedOut, []string{"whatever"}},
+		// Regression guards for the zvec-go misclassification batch:
+		// environment-like strings inside a failing test message
+		// must not discard kill evidence.
+		{"killed-env-string-in-msg", "--- FAIL: TestDel (0.00s)\n\tdel_test.go:9: Delete: remove /tmp/x: no such file or directory\nFAIL\tpkg\t0.05s\n", false, mutant.Killed, []string{"TestDel"}},
+		{"build-failed-not-kill", "FAIL\tpkg [build failed]\n", false, mutant.CompileError, nil},
+		{"bare-os-error-not-env", "ok\tpkg\t0.100s\nno such file or directory\n", false, mutant.Survived, nil},
+		{"panic-mention-in-log", "ok\tpkg\t0.100s\n  (log mentioned: panic: something)\n", false, mutant.Survived, nil},
+		{"panic-header", "panic: runtime error: index out of range\n", false, mutant.Killed, nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

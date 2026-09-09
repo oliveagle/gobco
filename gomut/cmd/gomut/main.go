@@ -27,7 +27,7 @@ import (
 	"github.com/oliveagle/gobco/gomut/internal/report"
 )
 
-const version = "0.2.5"
+const version = "0.3.0"
 
 func main() {
 	os.Exit(run(os.Stdout, os.Stderr, os.Args[1:]))

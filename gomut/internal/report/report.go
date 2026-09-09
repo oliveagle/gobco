@@ -57,8 +57,12 @@ type Score struct {
 	TimedOut     int `json:"timedOut"`
 	CompileError int `json:"compileError"`
 	RunError     int `json:"runError"`
-	// Main is detected/(total-NO_COVERAGE) in percent: the coverage-
-	// normalized mutation score.
+	// Invalid are non-compiling mutants (the patch itself breaks the
+	// build, e.g. Go's unused-variable rule); they are excluded from the
+	// denominator, like NO_COVERAGE.
+	Invalid int `json:"invalid"`
+	// Main is detected/(total-NO_COVERAGE-INVALID) in percent: the
+	// coverage- and validity-normalized mutation score.
 	Main float64 `json:"main"`
 	// Raw is detected/total in percent: the pitest raw ratio.
 	Raw float64 `json:"raw"`
@@ -69,9 +73,14 @@ type Report struct {
 	Tool      string    `json:"tool"`
 	Version   string    `json:"version"`
 	Generated time.Time `json:"generated"`
-	Packages  []Pkg     `json:"packages"`
-	Score     Score     `json:"score"`
-	ByOp      []OpScore `json:"byOperator"`
+	// Mode records how per-mutant test selection worked
+	// ("all-tests" or "coverage-selected"); with coverage-selected, a
+	// surviving mutant may be a selection artifact, so the mode is part
+	// of interpreting the score.
+	Mode     string    `json:"mode,omitempty"`
+	Packages []Pkg     `json:"packages"`
+	Score    Score     `json:"score"`
+	ByOp     []OpScore `json:"byOperator"`
 }
 
 // New builds a Report from per-package mutant lists.
@@ -138,6 +147,8 @@ func computeScore(pkgs []Pkg) Score {
 			s.CompileError++
 		case "RUN_ERROR":
 			s.RunError++
+		case "INVALID":
+			s.Invalid++
 		case "SURVIVED":
 			s.Survived++
 		}
@@ -155,14 +166,14 @@ func computeScore(pkgs []Pkg) Score {
 			count(m.Status, det)
 		}
 	}
-	s.Main = pct(s.Detected, s.Total-s.NoCoverage)
+	s.Main = pct(s.Detected, s.Total-s.NoCoverage-s.Invalid)
 	s.Raw = pct(s.Detected, s.Total)
 	return s
 }
 
 // computeByOp groups the score per operator (same formulas as D5).
 func computeByOp(pkgs []Pkg) []OpScore {
-	type acc struct{ total, detected, nocov int }
+	type acc struct{ total, detected, nocov, invalid int }
 	byOp := map[string]*acc{}
 	order := []string{}
 	for _, p := range pkgs {
@@ -177,6 +188,8 @@ func computeByOp(pkgs []Pkg) []OpScore {
 			switch m.Status {
 			case "NO_COVERAGE":
 				a.nocov++
+			case "INVALID":
+				a.invalid++
 			case "KILLED", "TIMED_OUT":
 				a.detected++
 			}
@@ -189,7 +202,7 @@ func computeByOp(pkgs []Pkg) []OpScore {
 			Operator: name,
 			Total:    a.total,
 			Detected: a.detected,
-			Score:    pct(a.detected, a.total-a.nocov),
+			Score:    pct(a.detected, a.total-a.nocov-a.invalid),
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Operator < out[j].Operator })
@@ -215,9 +228,28 @@ func WriteJSON(w io.Writer, r *Report) error {
 // (survivors, non-pass outcomes and the full list with detail), and a
 // per-file summary.
 func WriteText(w io.Writer, r *Report, showAll bool) {
-	fmt.Fprintf(w, "\nMutation testing: %.1f%% mutation score (%d/%d detected, %d no coverage)\n",
-		r.Score.Main, r.Score.Detected, r.Score.Total-r.Score.NoCoverage, r.Score.NoCoverage)
-	fmt.Fprintf(w, "  (raw: %d/%d = %.1f%%)\n\n", r.Score.Detected, r.Score.Total, r.Score.Raw)
+	extra := []string{}
+	if r.Score.Invalid > 0 {
+		extra = append(extra, fmt.Sprintf("%d invalid", r.Score.Invalid))
+	}
+	if r.Score.RunError > 0 {
+		extra = append(extra, fmt.Sprintf("%d run errors", r.Score.RunError))
+	}
+	if r.Score.TimedOut > 0 {
+		extra = append(extra, fmt.Sprintf("%d timed out", r.Score.TimedOut))
+	}
+	fmt.Fprintf(w, "\nMutation testing: %.1f%% mutation score (%d/%d detected, %d no coverage",
+		r.Score.Main, r.Score.Detected, r.Score.Total-r.Score.NoCoverage-r.Score.Invalid, r.Score.NoCoverage)
+	if len(extra) > 0 {
+		fmt.Fprintf(w, ", %s", strings.Join(extra, ", "))
+	}
+	fmt.Fprintln(w, ")")
+	fmt.Fprintf(w, "  (raw: %d/%d = %.1f%%", r.Score.Detected, r.Score.Total, r.Score.Raw)
+	if r.Mode != "" {
+		fmt.Fprintf(w, "; mode: %s", r.Mode)
+	}
+	fmt.Fprintln(w, ")")
+	fmt.Fprintln(w)
 
 	fmt.Fprint(w, "Per-operator:\n")
 	fmt.Fprintf(w, "  %-22s %6s %6s %10s\n", "operator", "total", "detected", "score")

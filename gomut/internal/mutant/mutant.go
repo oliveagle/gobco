@@ -21,10 +21,20 @@ const (
 	NoCoverage Status = "NO_COVERAGE"
 	// TimedOut: test execution exceeded the time budget (likely infinite loop).
 	TimedOut Status = "TIMED_OUT"
-	// CompileError: the mutation broke compilation (invalid mutant).
+	// CompileError: the test run failed to build for reasons outside the
+	// mutant's patched file (transient toolchain/environment problem); the
+	// mutant is retried on a later run.
 	CompileError Status = "COMPILE_ERROR"
 	// RunError: the test runner itself failed (environment problem).
 	RunError Status = "RUN_ERROR"
+	// Invalid: the mutation itself does not compile — e.g. a ReturnVals
+	// rewrite of one value of a comma-ok return ("v, ok := ...; return v,
+	// ok") that leaves the other value unused, which Go rejects. The
+	// baseline build is known-good, so the patch is the cause. Invalid
+	// mutants are excluded from the score denominator (like NO_COVERAGE):
+	// they cannot be killed, but the fault is the generator's, not the
+	// test suite's.
+	Invalid Status = "INVALID"
 )
 
 // Detected reports whether the status counts toward the score numerator.

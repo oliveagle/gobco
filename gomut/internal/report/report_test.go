@@ -35,6 +35,11 @@ func buildSample() (map[string][]*mutant.Mutant, map[string][]string, []string) 
 				Line: 8, Desc: "constant \"1\" replaced with \"2\"",
 				Status: mutant.NoCoverage,
 			},
+			{
+				Operator: "Math", File: "example.com/pkg/a.go", RelFile: "a.go",
+				Line: 9, Desc: "return value replaced with false (bool)",
+				Status: mutant.Invalid,
+			},
 		},
 	}
 	pkgErrors := map[string][]string{
@@ -52,17 +57,18 @@ func TestScoreReportText(t *testing.T) {
 	const eps = 1e-9
 	r := New("gomut", "0.2.0", pkgs, pkgErrors, opNames)
 
-	// Overall score (ADR-0001 D5): main = detected/(total-NO_COVERAGE);
+	// Overall score (ADR-0001 D5): main = detected/(total-NO_COVERAGE-INVALID);
 	// raw = detected/total.
-	if r.Score.Total != 4 || r.Score.Detected != 2 || r.Score.NoCoverage != 1 ||
-		r.Score.Killed != 1 || r.Score.Survived != 1 || r.Score.TimedOut != 1 {
+	if r.Score.Total != 5 || r.Score.Detected != 2 || r.Score.NoCoverage != 1 ||
+		r.Score.Invalid != 1 || r.Score.Killed != 1 || r.Score.Survived != 1 ||
+		r.Score.TimedOut != 1 {
 		t.Errorf("score counts = %+v", r.Score)
 	}
 	if d := math.Abs(r.Score.Main - 66.66666666666667); d > eps {
 		t.Errorf("main score = %v, want ~66.67", r.Score.Main)
 	}
-	if d := math.Abs(r.Score.Raw - 50); d > eps {
-		t.Errorf("raw score = %v, want 50", r.Score.Raw)
+	if d := math.Abs(r.Score.Raw - 40); d > eps {
+		t.Errorf("raw score = %v, want 40", r.Score.Raw)
 	}
 
 	// ByOperator grouping, sorted alphabetically by operator.
@@ -74,7 +80,7 @@ func TestScoreReportText(t *testing.T) {
 	}{
 		{"Constant", 1, 0, 100},
 		{"Increments", 1, 1, 100},
-		{"Math", 2, 1, 50},
+		{"Math", 3, 1, 50},
 	}
 	if len(r.ByOp) != len(wantByOp) {
 		t.Fatalf("ByOp len = %d, want %d (%+v)", len(r.ByOp), len(wantByOp), r.ByOp)
@@ -107,14 +113,15 @@ func TestScoreReportText(t *testing.T) {
 	WriteText(&tb, r, false)
 	out := tb.String()
 	for _, want := range []string{
-		"Mutation testing: 66.7% mutation score (2/3 detected, 1 no coverage)",
-		"(raw: 2/4 = 50.0%)",
+		"Mutation testing: 66.7% mutation score (2/3 detected, 1 no coverage, 1 invalid, 1 timed out)",
+		"(raw: 2/5 = 40.0%)",
 		"Per-operator:",
-		"example.com/pkg (4 mutants)",
+		"example.com/pkg (5 mutants)",
 		"!! type-check degraded to syntactic operators",
 		"SURVIVED",
 		"TIMED_OUT",
 		"NO_COVERAGE",
+		"INVALID",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("text output missing %q\n---\n%s", want, out)

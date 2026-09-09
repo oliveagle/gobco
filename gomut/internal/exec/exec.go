@@ -83,12 +83,23 @@ type Result struct {
 
 var (
 	reBuildFailed = regexp.MustCompile(`(?m)^FAIL\s+\S+\s+\[build failed\]\s*$`)
-	rePkgFail     = regexp.MustCompile(`(?m)^FAIL\t\S+\s+\S*`)
+	// rePkgFail matches the summary line of a real test failure
+	// ("FAIL\tpkg\t0.05s" — a duration), but not the build-failure
+	// line ("FAIL\tpkg\t[build failed]"), so a build failure is never
+	// mistaken for a kill.
+	rePkgFail     = regexp.MustCompile(`(?m)^FAIL\t\S+\t[\d.]+s`)
 	reNoTests     = regexp.MustCompile(`no tests to run`)
 	reNoTestFiles = regexp.MustCompile(`no test files`)
 	reTestFail    = regexp.MustCompile(`(?m)^--- FAIL: (\S+)`)
-	rePanic       = regexp.MustCompile(`panic:`)
-	reEnvError    = regexp.MustCompile(`(no required module provides|cannot find package|no such file or directory|go: no such|unknown revision)`)
+	// rePanic is line-anchored to the runtime panic header; a "panic:"
+	// mentioned inside test output is not a crashing binary.
+	rePanic = regexp.MustCompile(`(?m)^panic: `)
+	// reEnvError matches toolchain/environment failures reported by the
+	// go command itself. Every alternative is line-anchored (and the
+	// bare "no such file or directory" is gone) so that environment-like
+	// strings inside test failure messages — e.g. an os error reported
+	// by a failing test — can never trigger a RUN_ERROR classification.
+	reEnvError = regexp.MustCompile(`(?m)^\s*(go: |no required module provides|cannot find package|unknown revision)`)
 )
 
 // Run executes one test run and classifies the outcome.
@@ -175,14 +186,17 @@ func classify(output string, timedOut bool) mutant.Status {
 	if reBuildFailed.MatchString(output) {
 		return mutant.CompileError
 	}
+	// Test-failure evidence takes precedence over the environment
+	// heuristic: a failed test kills the mutant even when the failure
+	// message contains environment-like strings.
+	if extractFailures(output) != nil || rePkgFail.MatchString(output) || rePanic.MatchString(output) {
+		return mutant.Killed
+	}
 	if reEnvError.MatchString(output) {
 		return mutant.RunError
 	}
 	if reNoTests.MatchString(output) {
 		return mutant.NoCoverage
-	}
-	if extractFailures(output) != nil || rePkgFail.MatchString(output) || rePanic.MatchString(output) {
-		return mutant.Killed
 	}
 	return mutant.Survived
 }

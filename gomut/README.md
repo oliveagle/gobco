@@ -23,16 +23,22 @@ Each mutant ends up in exactly one state:
 | `SURVIVED` | every test still passed — your tests are too weak to catch this |
 | `TIMED_OUT` | the mutation made a test loop forever; it was killed by a timeout |
 | `NO_COVERAGE` | no test reaches this code, so the mutation could neither be killed nor survive |
+| `INVALID` | the mutation itself does not compile (e.g. a return-value rewrite of a comma-ok return that orphans a now-unused variable); excluded from the score like `NO_COVERAGE` because the fault is the generator's, not the tests'
 
 `gomut` reports the **mutation score**:
 
 ```
-mutation score = detected / (total − no_coverage)
+mutation score = detected / (total − no_coverage − invalid)
 detected       = killed + timed_out
 ```
 
-A mutant in `NO_COVERAGE` is excluded from the denominator, so code your tests
-never exercise does not drag the score down. See
+`NO_COVERAGE` mutants are excluded from the denominator (code your tests never
+exercise should not drag the score down), and `INVALID` mutants are excluded as
+well, since their build failure is a byproduct of the mutation generator.
+The report header also records the per-mutant test selection mode the run
+used (`all-tests` or `coverage-selected`): under coverage selection a surviving
+mutant may be a selection artifact, so the mode is part of reading the score.
+See
 [ADR-0001](../docs/adr/0001-gomut-go-mutation-testing.md)
 for the exact definitions.
 
@@ -153,8 +159,9 @@ github.com/oliveagle/gobco/gomut/testdata/sample (18 mutants)
 ~~~
 
 The raw percentage (`14/18 = 77.8%`) counts every mutant in the denominator;
-the headline score (`87.5%`) excludes the two `NO_COVERAGE` mutants, matching
-the definition above. The `-v` flag additionally prints, for each killed mutant,
+the headline score (`87.5%`) excludes the two `NO_COVERAGE` mutants (as well
+as any `INVALID` ones, of which this sample has none), matching the
+definition above. The `-v` flag additionally prints, for each killed mutant,
 *which* test killed it and the failure output it produced.
 
 ### Exit codes
