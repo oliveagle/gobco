@@ -258,3 +258,60 @@ func (w *capWriter) String() string {
 	}
 	return s
 }
+
+// RunBinary executes a precompiled test binary (produced by `go test -c`)
+// with an environment override and the selected tests, classifying the
+// outcome exactly like Run. Used by the runtime-injection execution path:
+// one compile, then one binary invocation per mutant with
+// GOMUT_MUTANT=<case id> selecting the injected switch branch.
+func RunBinary(parent context.Context, binPath, dir string, tests []string, env []string, failfast bool, timeout time.Duration) Result {
+	ctx := parent
+	var cancel context.CancelFunc = func() {}
+	if timeout > 0 {
+		ctx, cancel = context.WithTimeout(parent, timeout)
+	}
+	defer cancel()
+
+	start := time.Now()
+	args := []string{"-test.count=1"}
+	if len(tests) > 0 {
+		args = append(args, "-test.run=^("+strings.Join(tests, "|")+")$")
+	}
+	if failfast {
+		args = append(args, "-test.failfast")
+	}
+	args = append(args, "-test.v")
+
+	cmd := exec.Command(binPath, args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), env...)
+	setProcessGroup(cmd)
+
+	stdout := newCapWriter(maxOutput)
+	stderr := newCapWriter(maxOutput)
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+
+	if err := cmd.Start(); err != nil {
+		return Result{Status: mutant.RunError, Output: err.Error(), Duration: time.Since(start)}
+	}
+	waitDone := make(chan error, 1)
+	go func() { waitDone <- cmd.Wait() }()
+
+	var timedOut bool
+	select {
+	case <-waitDone:
+	case <-ctx.Done():
+		timedOut = true
+		killProcessGroup(cmd)
+		<-waitDone
+	}
+
+	output := combine(stdout.String(), stderr.String())
+	return Result{
+		Status:   classify(output, timedOut),
+		Output:   tail(output, 32*1024),
+		Failures: extractFailures(output),
+		Duration: time.Since(start),
+	}
+}

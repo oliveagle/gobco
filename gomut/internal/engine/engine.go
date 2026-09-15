@@ -30,6 +30,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"runtime"
 	"sort"
 	"strings"
@@ -67,6 +68,14 @@ type Options struct {
 	AllTests bool
 	// NoCache disables the result cache.
 	NoCache bool
+	// Inject enables runtime-injection execution: the test binary is
+	// compiled ONCE with every mutant embedded as a function-body switch,
+	// then each mutant is run by setting GOMUT_MUTANT=<case id>. This
+	// removes the per-mutant `go test -overlay` compile that dominates
+	// cold-run wall time. Results are equivalent to the default overlay
+	// path (each injected switch branch is the original body plus exactly
+	// one patch); see internal/mutate/inject.go.
+	Inject bool
 	// GoBin overrides the go binary (default: "go" on PATH).
 	GoBin string
 	// Logf receives progress lines (may be nil).
@@ -208,6 +217,7 @@ func (e *Engine) processPackage(ctx context.Context, p listPkg) ([]*mutant.Mutan
 			rel:     e.relPath(p.Dir, abs),
 			content: string(data),
 			ast:     f,
+			fset:    fset,
 		})
 	}
 
@@ -281,6 +291,7 @@ func (e *Engine) processPackage(ctx context.Context, p listPkg) ([]*mutant.Mutan
 					Content:  content,
 					Dir:      p.Dir,
 					FileName: sf.name,
+					Patch:    site.Patch,
 				})
 			}
 		}
@@ -291,6 +302,9 @@ func (e *Engine) processPackage(ctx context.Context, p listPkg) ([]*mutant.Mutan
 		}
 		return muts[i].Line < muts[j].Line
 	})
+	for i := range muts {
+		muts[i].CaseID = strconv.Itoa(i)
+	}
 
 	// Selection (D3): uncovered lines -> NO_COVERAGE, the rest run only
 	// the tests that cover their line.

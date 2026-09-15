@@ -74,6 +74,15 @@ type Mutant struct {
 	// Output is the tail of the test run output, kept for the report
 	// on non-pass outcomes (COMPILE_ERROR, RUN_ERROR, TIMED_OUT).
 	Output string
+
+	// Patch is the single text replacement that defines this mutant; it
+	// is the same Patch reported by the originating Site. The runtime-
+	// injection executor uses it to regenerate the function-body switch.
+	Patch Patch
+	// CaseID is the global integer index assigned after sorting; in the
+	// injected binary, the switch case labelled CaseID activates this
+	// mutant's Patch via GOMUT_MUTANT=CaseID. Zero in non-injection runs.
+	CaseID string
 }
 
 // ID returns a stable human-readable identifier.

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"go/ast"
+	"go/token"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -31,6 +32,7 @@ type srcFile struct {
 	rel     string
 	content string
 	ast     *ast.File
+	fset    *token.FileSet
 }
 
 // execute runs the pending mutants (status == "") in a pool of parallel

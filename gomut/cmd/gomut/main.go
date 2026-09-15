@@ -19,15 +19,18 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/oliveagle/gobco/gomut/internal/engine"
+	"github.com/oliveagle/gobco/gomut/internal/impact"
 	"github.com/oliveagle/gobco/gomut/internal/mutate"
+	"github.com/oliveagle/gobco/gomut/internal/mutant"
 	"github.com/oliveagle/gobco/gomut/internal/report"
 )
 
-const version = "0.3.0"
+const version = "0.4.0"
 
 func main() {
 	os.Exit(run(os.Stdout, os.Stderr, os.Args[1:]))
@@ -48,6 +51,11 @@ func run(stdout, stderr *os.File, args []string) int {
 		verbose     = fs.Bool("v", false, "print per-mutant progress")
 		showVersion = fs.Bool("version", false, "print the version and exit")
 		help        = fs.Bool("help", false, "print this usage")
+
+		// Incremental testing flags
+		incremental = fs.Bool("incremental", false, "run incremental mutation testing based on git diff")
+		baselineRef = fs.String("baseline", "HEAD", "git ref for baseline comparison in incremental mode")
+		showImpact  = fs.Bool("impact", false, "show impact analysis without running mutations")
 	)
 	fs.Usage = func() {
 		fmt.Fprintln(fs.Output(), "usage: gomut [flags] [packages...]")
@@ -58,6 +66,8 @@ func run(stdout, stderr *os.File, args []string) int {
 		fmt.Fprintln(fs.Output(), "  gomut ./...")
 		fmt.Fprintln(fs.Output(), "  gomut -mutators=Math,Constant -threshold=80 .")
 		fmt.Fprintln(fs.Output(), "  gomut -all-tests -v ./pkg")
+		fmt.Fprintln(fs.Output(), "  gomut -incremental -baseline=main ./...")
+		fmt.Fprintln(fs.Output(), "  gomut -impact -baseline=HEAD~1 ./...")
 	}
 	if err := fs.Parse(args); err != nil {
 		if err != flag.ErrHelp {
@@ -99,8 +109,28 @@ func run(stdout, stderr *os.File, args []string) int {
 		}
 	}
 
+	dir := "."
+	if len(fs.Args()) > 0 {
+		// Use the first argument as directory if it's a path
+		if info, err := os.Stat(fs.Args()[0]); err == nil && info.IsDir() {
+			dir = fs.Args()[0]
+		}
+	}
+
+	// Handle impact analysis mode
+	if *showImpact {
+		return runImpactAnalysis(dir, *baselineRef, fs.Args(), stderr)
+	}
+
+	// Handle incremental mode
+	if *incremental {
+		return runIncremental(stdout, stderr, dir, *baselineRef, fs.Args(), ops, *workers, *timeout, *allTests, *noCache, *threshold, *reportDir, *formats, *verbose)
+	}
+
+	// Standard mutation testing mode
 	e := engine.New(engine.Options{
-		Patterns:  fs.Args(),
+		Dir:      dir,
+		Patterns: fs.Args(),
 		Operators: ops,
 		Workers:   *workers,
 		Timeout:   *timeout,
@@ -155,6 +185,165 @@ func run(stdout, stderr *os.File, args []string) int {
 
 	if *threshold > 0 && rep.Score.Main < float64(*threshold) {
 		fmt.Fprintf(stderr, "gomut: mutation score %.1f%% is below threshold %d%%\n", rep.Score.Main, *threshold)
+		return 2
+	}
+	return 0
+}
+
+// runImpactAnalysis shows impact analysis without running mutations.
+func runImpactAnalysis(dir, baselineRef string, patterns []string, stderr *os.File) int {
+	if !impact.IsGitRepo(dir) {
+		fmt.Fprintf(stderr, "gomut: not a git repository\n")
+		return 1
+	}
+
+	// Get changes
+	changes, err := impact.ParseGitDiff(dir, baselineRef)
+	if err != nil {
+		fmt.Fprintf(stderr, "gomut: error parsing git diff: %v\n", err)
+		return 1
+	}
+
+	if len(changes) == 0 {
+		fmt.Fprintf(stderr, "No Go file changes detected\n")
+		return 0
+	}
+
+	fmt.Fprintf(stderr, "Changed files:\n")
+	for _, c := range changes {
+		fmt.Fprintf(stderr, "  %s (+%d lines, -%d lines)\n", c.File, len(c.AddedLines), len(c.RemovedLines))
+	}
+
+	// Build call graph
+	cg, err := impact.BuildCallGraph(dir, patterns)
+	if err != nil {
+		fmt.Fprintf(stderr, "gomut: error building call graph: %v\n", err)
+		return 1
+	}
+
+	// Compute domain
+	domain := impact.ComputeDomain(cg, changes)
+
+	fmt.Fprintf(stderr, "\nImpact Analysis:\n")
+	fmt.Fprintf(stderr, "  Directly changed: %d functions\n", len(domain.Changed))
+	fmt.Fprintf(stderr, "  Forward (callees): %d functions\n", len(domain.Forward))
+	fmt.Fprintf(stderr, "  Backward (callers): %d functions\n", len(domain.Backward))
+	fmt.Fprintf(stderr, "  Total impact domain: %d functions\n", len(domain.All))
+
+	// Show affected functions with details
+	if len(domain.Changed) > 0 {
+		fmt.Fprintf(stderr, "\nChanged functions:\n")
+		keys := make([]string, 0, len(domain.Changed))
+		for key := range domain.Changed {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			if node, ok := cg.Funcs[key]; ok {
+				fmt.Fprintf(stderr, "  %s:%d-%d\n", node.File, node.StartLine, node.EndLine)
+			}
+		}
+	}
+
+	if len(domain.Forward) > 0 {
+		fmt.Fprintf(stderr, "\nForward propagation (callees - functions called by changed code):\n")
+		keys := make([]string, 0, len(domain.Forward))
+		for key := range domain.Forward {
+			if !domain.Changed[key] {
+				keys = append(keys, key)
+			}
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			if node, ok := cg.Funcs[key]; ok {
+				fmt.Fprintf(stderr, "  %s:%d-%d\n", node.File, node.StartLine, node.EndLine)
+			}
+		}
+	}
+
+	if len(domain.Backward) > 0 {
+		fmt.Fprintf(stderr, "\nBackward propagation (callers - functions that call changed code):\n")
+		keys := make([]string, 0, len(domain.Backward))
+		for key := range domain.Backward {
+			if !domain.Changed[key] {
+				keys = append(keys, key)
+			}
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			if node, ok := cg.Funcs[key]; ok {
+				fmt.Fprintf(stderr, "  %s:%d-%d\n", node.File, node.StartLine, node.EndLine)
+			}
+		}
+	}
+
+	return 0
+}
+
+// runIncremental runs incremental mutation testing.
+func runIncremental(stdout, stderr *os.File, dir, baselineRef string, patterns []string, ops []mutant.Operator, workers int, timeout time.Duration, allTests, noCache bool, threshold int, reportDir, formats string, verbose bool) int {
+	if !impact.IsGitRepo(dir) {
+		fmt.Fprintf(stderr, "gomut: not a git repository\n")
+		return 1
+	}
+
+	e := impact.NewIncremental(engine.Options{
+		Dir:      dir,
+		Patterns: patterns,
+		Operators: ops,
+		Workers:   workers,
+		Timeout:   timeout,
+		AllTests:  allTests,
+		NoCache:   noCache,
+		Version:   version,
+		Logf: func(format string, a ...interface{}) {
+			if verbose {
+				fmt.Fprintf(stderr, format+"\n", a...)
+			}
+		},
+	}, baselineRef)
+
+	start := time.Now()
+	rep, err := e.RunIncremental(context.Background())
+	if err != nil {
+		fmt.Fprintf(stderr, "gomut: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(stderr, "gomut: %d mutants in %s (incremental)\n", rep.Score.Total, time.Since(start).Round(time.Millisecond))
+
+	// File output.
+	if reportDir != "" {
+		if err := os.MkdirAll(reportDir, 0o755); err != nil {
+			fmt.Fprintf(stderr, "gomut: %v\n", err)
+			return 1
+		}
+		for _, f := range strings.Split(formats, ",") {
+			switch strings.TrimSpace(f) {
+			case "text":
+				if err := writeReport(reportDir, "report.txt", func(w *os.File) error {
+					report.WriteText(w, rep, true)
+					return nil
+				}); err != nil {
+					fmt.Fprintf(stderr, "gomut: %v\n", err)
+					return 1
+				}
+			case "json":
+				if err := writeReport(reportDir, "report.json", func(w *os.File) error {
+					return report.WriteJSON(w, rep)
+				}); err != nil {
+					fmt.Fprintf(stderr, "gomut: %v\n", err)
+					return 1
+				}
+			}
+		}
+	}
+
+	// Console summary.
+	fmt.Fprintln(stdout)
+	report.WriteText(stdout, rep, verbose)
+
+	if threshold > 0 && rep.Score.Main < float64(threshold) {
+		fmt.Fprintf(stderr, "gomut: mutation score %.1f%% is below threshold %d%%\n", rep.Score.Main, threshold)
 		return 2
 	}
 	return 0
