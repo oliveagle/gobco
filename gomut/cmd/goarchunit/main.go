@@ -1,8 +1,8 @@
-// Command archunit checks architecture rules for Go projects.
+// Command goarchunit checks architecture rules for Go projects.
 //
 // Usage:
 //
-//	archunit [flags] [packages...]
+//	goarchunit [flags] [packages...]
 //
 // It parses Go packages, builds a dependency graph, and verifies
 // that the codebase follows user-defined architectural rules.
@@ -15,7 +15,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/oliveagle/gobco/gomut/internal/archunit"
+	"github.com/oliveagle/gobco/gomut/internal/goarchunit"
 )
 
 const version = "0.1.0"
@@ -25,20 +25,20 @@ func main() {
 }
 
 func run(args []string) int {
-	fs := flag.NewFlagSet("archunit", flag.ContinueOnError)
+	fs := flag.NewFlagSet("goarchunit", flag.ContinueOnError)
 	rulesFile := fs.String("rules", "", "path to architecture rules file (default: auto-detect)")
 	showVersion := fs.Bool("version", false, "print the version and exit")
 	verbose := fs.Bool("v", false, "print detailed check results")
 
 	fs.Usage = func() {
-		fmt.Fprintln(fs.Output(), "usage: archunit [flags] [packages...]")
+		fmt.Fprintln(fs.Output(), "usage: goarchunit [flags] [packages...]")
 		fmt.Fprintln(fs.Output(), "\nChecks architecture rules for Go projects.")
 		fmt.Fprintln(fs.Output(), "\nflags:")
 		fs.PrintDefaults()
 		fmt.Fprintln(fs.Output(), "\nexamples:")
-		fmt.Fprintln(fs.Output(), "  archunit ./...")
-		fmt.Fprintln(fs.Output(), "  archunit -rules=archunit.yaml ./pkg/...")
-		fmt.Fprintln(fs.Output(), "  archunit -v ./...")
+		fmt.Fprintln(fs.Output(), "  goarchunit ./...")
+		fmt.Fprintln(fs.Output(), "  goarchunit -rules=goarchunit.yaml ./pkg/...")
+		fmt.Fprintln(fs.Output(), "  goarchunit -v ./...")
 	}
 
 	if err := fs.Parse(args); err != nil {
@@ -50,7 +50,7 @@ func run(args []string) int {
 	}
 
 	if *showVersion {
-		fmt.Fprintf(os.Stdout, "archunit %s\n", version)
+		fmt.Fprintf(os.Stdout, "goarchunit %s\n", version)
 		return 0
 	}
 
@@ -62,24 +62,24 @@ func run(args []string) int {
 	// Try to load rules from file, fall back to defaults
 	rules := loadRules(*rulesFile)
 	if rules == nil {
-		fmt.Fprintln(os.Stderr, "archunit: no rules file found, using built-in defaults")
+		fmt.Fprintln(os.Stderr, "goarchunit: no rules file found, using built-in defaults")
 		rules = defaultRules()
 	}
 
 	// Run checks
 	violations, err := rules.Check(".", patterns)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "archunit: %v\n", err)
+		fmt.Fprintf(os.Stderr, "goarchunit: %v\n", err)
 		return 1
 	}
 
 	if len(violations) == 0 {
-		fmt.Fprintln(os.Stderr, "archunit: all checks passed ✓")
+		fmt.Fprintln(os.Stderr, "goarchunit: all checks passed ✓")
 		return 0
 	}
 
 	// Print violations
-	fmt.Fprintf(os.Stderr, "archunit: %d violation(s) found:\n\n", len(violations))
+	fmt.Fprintf(os.Stderr, "goarchunit: %d violation(s) found:\n\n", len(violations))
 	for _, v := range violations {
 		fmt.Fprintf(os.Stderr, "  %s\n", v)
 	}
@@ -92,10 +92,10 @@ func run(args []string) int {
 }
 
 // loadRules tries to load rules from a YAML file.
-func loadRules(path string) *archunit.RuleSet {
+func loadRules(path string) *goarchunit.RuleSet {
 	if path == "" {
 		// Auto-detect common file names
-		for _, name := range []string{"archunit.yaml", "archunit.yml", ".archunit.yaml"} {
+		for _, name := range []string{"goarchunit.yaml", "goarchunit.yml", ".goarchunit.yaml"} {
 			if _, err := os.Stat(name); err == nil {
 				path = name
 				break
@@ -108,13 +108,13 @@ func loadRules(path string) *archunit.RuleSet {
 	}
 
 	// TODO: implement YAML parsing
-	fmt.Fprintf(os.Stderr, "archunit: YAML rules file not yet implemented\n")
+	fmt.Fprintf(os.Stderr, "goarchunit: YAML rules file not yet implemented\n")
 	return nil
 }
 
 // defaultRules returns the default architecture rules.
-func defaultRules() *archunit.RuleSet {
-	return archunit.NewRules("default").
+func defaultRules() *goarchunit.RuleSet {
+	return goarchunit.NewRules("default").
 		NoCycles().
 		Build()
 }

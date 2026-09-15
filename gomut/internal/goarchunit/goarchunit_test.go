@@ -1,4 +1,4 @@
-package archunit
+package goarchunit
 
 import (
 	"os"

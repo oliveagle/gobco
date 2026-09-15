@@ -1,4 +1,4 @@
-// Package archunit implements architecture testing for Go projects,
+// Package goarchunit implements architecture testing for Go projects,
 // inspired by Java's ArchUnit.
 //
 // It parses Go packages, builds a dependency graph, and verifies
@@ -11,7 +11,7 @@
 //
 // Usage:
 //
-//	rules := archunit.NewRules("myproject").
+//	rules := goarchunit.NewRules("myproject").
 //		That("controller").MayNotDependOn("repository").
 //		That("service").MayOnlyDependOn("domain", "repository").
 //		NoCycles().
@@ -25,7 +25,7 @@
 //		}
 //		os.Exit(1)
 //	}
-package archunit
+package goarchunit
 
 import (
 	"bytes"
