@@ -27,7 +27,6 @@ import (
 	"github.com/oliveagle/gobco/gomut/internal/impact"
 	"github.com/oliveagle/gobco/gomut/internal/mutate"
 	"github.com/oliveagle/gobco/gomut/internal/mutant"
-	"github.com/oliveagle/gobco/gomut/internal/archunit"
 	"github.com/oliveagle/gobco/gomut/internal/report"
 )
 
@@ -59,8 +58,6 @@ func run(stdout, stderr *os.File, args []string) int {
 		showImpact  = fs.Bool("impact", false, "show impact analysis without running mutations")
 
 		// Architecture testing flags
-		archCheck = fs.Bool("arch", false, "run architecture rule checks")
-		archRules = fs.String("arch-rules", "", "path to architecture rules file (default: archunit.yaml)")
 	)
 	fs.Usage = func() {
 		fmt.Fprintln(fs.Output(), "usage: gomut [flags] [packages...]")
@@ -73,7 +70,6 @@ func run(stdout, stderr *os.File, args []string) int {
 		fmt.Fprintln(fs.Output(), "  gomut -all-tests -v ./pkg")
 		fmt.Fprintln(fs.Output(), "  gomut -incremental -baseline=main ./...")
 		fmt.Fprintln(fs.Output(), "  gomut -impact -baseline=HEAD~1 ./...")
-		fmt.Fprintln(fs.Output(), "  gomut -arch ./...")
 	}
 	if err := fs.Parse(args); err != nil {
 		if err != flag.ErrHelp {
@@ -128,10 +124,6 @@ func run(stdout, stderr *os.File, args []string) int {
 		return runImpactAnalysis(dir, *baselineRef, fs.Args(), stderr)
 	}
 
-	// Handle architecture testing mode
-	if *archCheck {
-		return runArchCheck(dir, fs.Args(), *archRules, stderr)
-	}
 
 	// Handle incremental mode
 	if *incremental {
@@ -370,47 +362,3 @@ func writeReport(dir, name string, write func(w *os.File) error) error {
 	return write(w)
 }
 
-// runArchCheck runs architecture rule checks.
-func runArchCheck(dir string, patterns []string, rulesFile string, stderr *os.File) int {
-	// Default rules file
-	if rulesFile == "" {
-		rulesFile = "archunit.yaml"
-	}
-
-	// Check if rules file exists, if not use built-in rules
-	if _, err := os.Stat(rulesFile); os.IsNotExist(err) {
-		fmt.Fprintf(stderr, "gomut: no architecture rules file found at %s\n", rulesFile)
-		fmt.Fprintf(stderr, "Using default rules: layer dependencies, no cycles\n")
-
-		// Use default rules
-		rules := archunit.NewRules("default").
-			Layers().
-			Add("handler", "*/handler", "*/controllers", "*/api").
-			Add("service", "*/service", "*/services", "*/usecase").
-			Add("repository", "*/repository", "*/repo", "*/dao", "*/storage").
-			Build().
-			NoCycles().
-			Build()
-
-		violations, err := rules.Check(dir, patterns)
-		if err != nil {
-			fmt.Fprintf(stderr, "gomut: %v\n", err)
-			return 1
-		}
-
-		if len(violations) == 0 {
-			fmt.Fprintf(stderr, "gomut: all architecture checks passed\n")
-			return 0
-		}
-
-		fmt.Fprintf(stderr, "gomut: found %d architecture violations:\n", len(violations))
-		for _, v := range violations {
-			fmt.Fprintf(stderr, "  %s\n", v)
-		}
-		return 1
-	}
-
-	// TODO: Parse custom rules from YAML file
-	fmt.Fprintf(stderr, "gomut: custom rules file not yet implemented, using defaults\n")
-	return 0
-}
