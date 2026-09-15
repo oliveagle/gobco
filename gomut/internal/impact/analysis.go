@@ -21,6 +21,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -40,7 +41,7 @@ type FuncNode struct {
 	Name string
 	// Package is the package import path.
 	Package string
-	// File is the source file path.
+	// File is the source file path (absolute).
 	File string
 	// StartLine and EndLine are the 1-based line numbers.
 	StartLine, EndLine int
@@ -54,6 +55,8 @@ type FuncNode struct {
 	ReceiverType string
 	// IsMethod indicates if this is a method (has a receiver).
 	IsMethod bool
+	// IsInit indicates if this is an init() function.
+	IsInit bool
 }
 
 // InterfaceInfo tracks interface definitions and their implementations.
@@ -72,13 +75,13 @@ type InterfaceInfo struct {
 type CallGraph struct {
 	// Funcs maps function key to FuncNode.
 	Funcs map[string]*FuncNode
-	// ByFile maps file path to function nodes in that file.
+	// ByFile maps absolute file path to function nodes in that file.
 	ByFile map[string][]*FuncNode
 	// ByPackage maps package import path to function keys.
 	ByPackage map[string][]string
 	// Interfaces tracks interface definitions and implementations.
 	Interfaces map[string]*InterfaceInfo
-	// InterfaceImpls maps interface method calls to possible implementations.
+	// InterfaceImpls maps "pkg:InterfaceName.MethodName" to implementation func keys.
 	InterfaceImpls map[string][]string
 	// pendingCalls temporarily stores call relationships before linking.
 	pendingCalls []callInfo
@@ -116,24 +119,23 @@ func BuildCallGraph(dir string, packages []string) (*CallGraph, error) {
 
 	// Discover module path
 	if err := cg.discoverModule(dir); err != nil {
-		// Fallback: use dir as module path
 		cg.modulePath = filepath.Base(dir)
 	}
 
 	// Discover all packages in the project
 	if err := cg.discoverPackages(dir); err != nil {
-		// Fallback: use provided packages
 		for _, pkg := range packages {
 			pkgDir := filepath.Join(dir, pkg)
-			cg.pkgDirs[pkg] = pkgDir
-			cg.pkgImports[pkgDir] = pkg
+			absDir, _ := filepath.Abs(pkgDir)
+			cg.pkgDirs[pkg] = absDir
+			cg.pkgImports[absDir] = pkg
 		}
 	}
 
 	// Parse all packages to build function declarations and interface info
 	for pkgPath, pkgDir := range cg.pkgDirs {
 		if err := cg.parsePackage(pkgDir, pkgPath); err != nil {
-			continue // skip packages that can't be parsed
+			continue
 		}
 	}
 
@@ -161,14 +163,12 @@ func (cg *CallGraph) discoverModule(dir string) error {
 	if err != nil {
 		return err
 	}
-
 	var mod struct {
 		Path string `json:"Path"`
 	}
 	if err := json.Unmarshal(out, &mod); err != nil {
 		return err
 	}
-
 	cg.modulePath = mod.Path
 	return nil
 }
@@ -181,8 +181,6 @@ func (cg *CallGraph) discoverPackages(dir string) error {
 	if err != nil {
 		return err
 	}
-
-	// Parse concatenated JSON objects
 	dec := json.NewDecoder(bytes.NewReader(out))
 	for {
 		var pkg struct {
@@ -193,15 +191,12 @@ func (cg *CallGraph) discoverPackages(dir string) error {
 		if err := dec.Decode(&pkg); err != nil {
 			break
 		}
-
 		if len(pkg.GoFiles) == 0 {
-			continue // skip packages with no Go files
+			continue
 		}
-
 		cg.pkgDirs[pkg.ImportPath] = pkg.Dir
 		cg.pkgImports[pkg.Dir] = pkg.ImportPath
 	}
-
 	return nil
 }
 
@@ -211,22 +206,18 @@ func (cg *CallGraph) parsePackage(pkgDir, pkgPath string) error {
 	if err != nil {
 		return err
 	}
-
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
 			continue
 		}
-
 		filePath := filepath.Join(pkgDir, entry.Name())
 		fset := token.NewFileSet()
 		f, err := parser.ParseFile(fset, filePath, nil, 0)
 		if err != nil {
 			continue
 		}
-
 		cg.parseFile(fset, f, filePath, pkgPath)
 	}
-
 	return nil
 }
 
@@ -236,46 +227,36 @@ func (cg *CallGraph) parseTestFiles(pkgDir, pkgPath string) error {
 	if err != nil {
 		return err
 	}
-
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), "_test.go") {
 			continue
 		}
-
 		filePath := filepath.Join(pkgDir, entry.Name())
 		fset := token.NewFileSet()
 		f, err := parser.ParseFile(fset, filePath, nil, 0)
 		if err != nil {
 			continue
 		}
-
-		// Parse imports to map package aliases to import paths
 		importMap := cg.buildImportMap(f)
-
-		// Parse function declarations in test files
 		cg.parseTestFileFuncs(fset, f, filePath, pkgPath, importMap)
 	}
-
 	return nil
 }
 
 // buildImportMap creates a mapping from package aliases to import paths.
 func (cg *CallGraph) buildImportMap(f *ast.File) map[string]string {
 	importMap := make(map[string]string)
-
 	for _, imp := range f.Imports {
 		path := strings.Trim(imp.Path.Value, "\"")
 		var alias string
 		if imp.Name != nil {
 			alias = imp.Name.Name
 		} else {
-			// Use last element of import path as default alias
 			parts := strings.Split(path, "/")
 			alias = parts[len(parts)-1]
 		}
 		importMap[alias] = path
 	}
-
 	return importMap
 }
 
@@ -286,11 +267,9 @@ func (cg *CallGraph) parseTestFileFuncs(fset *token.FileSet, f *ast.File, filePa
 		if !ok || fn.Body == nil {
 			continue
 		}
-
 		callerName := fn.Name.Name
 		callerKey := FuncKey(pkgPath, callerName)
 
-		// Find all calls in the function body
 		var calls []string
 		ast.Inspect(fn.Body, func(n ast.Node) bool {
 			callExpr, ok := n.(*ast.CallExpr)
@@ -303,8 +282,6 @@ func (cg *CallGraph) parseTestFileFuncs(fset *token.FileSet, f *ast.File, filePa
 			}
 			return true
 		})
-
-		// Store calls for linking
 		cg.storeCalls(callerKey, calls)
 	}
 }
@@ -322,6 +299,7 @@ func (cg *CallGraph) parseFile(fset *token.FileSet, f *ast.File, filePath, pkgPa
 		isExported := fn.Name.IsExported()
 		var recvType string
 		isMethod := false
+		isInit := name == "init"
 
 		if fn.Recv != nil && len(fn.Recv.List) > 0 {
 			recvType = recvTypeName(fn.Recv.List[0].Type)
@@ -344,6 +322,7 @@ func (cg *CallGraph) parseFile(fset *token.FileSet, f *ast.File, filePath, pkgPa
 			IsExported:   isExported,
 			ReceiverType: recvType,
 			IsMethod:     isMethod,
+			IsInit:       isInit,
 		}
 
 		cg.Funcs[key] = node
@@ -370,21 +349,21 @@ func (cg *CallGraph) parseFile(fset *token.FileSet, f *ast.File, filePath, pkgPa
 		}
 		callerKey := FuncKey(pkgPath, callerName)
 
-		// Find all calls in the function body
+		// Collect local variable types for better call resolution
+		localTypes := collectLocalTypes(fn)
+
 		var calls []string
 		ast.Inspect(fn.Body, func(n ast.Node) bool {
 			callExpr, ok := n.(*ast.CallExpr)
 			if !ok {
 				return true
 			}
-			calleeName := resolveCallNameWithImports(callExpr.Fun, pkgPath, importMap)
+			calleeName := resolveCallNameFull(callExpr.Fun, pkgPath, importMap, localTypes)
 			if calleeName != "" {
 				calls = append(calls, calleeName)
 			}
 			return true
 		})
-
-		// Store calls for linking
 		cg.storeCalls(callerKey, calls)
 	}
 
@@ -394,31 +373,25 @@ func (cg *CallGraph) parseFile(fset *token.FileSet, f *ast.File, filePath, pkgPa
 		if !ok || ts.Tok != token.TYPE {
 			continue
 		}
-
 		for _, spec := range ts.Specs {
 			typeSpec, ok := spec.(*ast.TypeSpec)
 			if !ok {
 				continue
 			}
-
 			iface, ok := typeSpec.Type.(*ast.InterfaceType)
 			if !ok {
 				continue
 			}
-
-			// Track interface definition
 			ifaceInfo := &InterfaceInfo{
 				Name:            typeSpec.Name.Name,
 				Package:         pkgPath,
 				Methods:         make(map[string]bool),
 				Implementations: make(map[string]string),
 			}
-
 			for _, method := range iface.Methods.List {
-				// For interface methods, we need to get the method name from the field names
 				for _, name := range method.Names {
 					ifaceInfo.Methods[name.Name] = true
-					
+
 					// Create a function node for the interface method
 					methodKey := FuncKey(pkgPath, typeSpec.Name.Name+"."+name.Name)
 					startLine := fset.Position(method.Pos()).Line
@@ -436,10 +409,54 @@ func (cg *CallGraph) parseFile(fset *token.FileSet, f *ast.File, filePath, pkgPa
 					cg.ByPackage[pkgPath] = append(cg.ByPackage[pkgPath], methodKey)
 				}
 			}
-
 			cg.Interfaces[FuncKey(pkgPath, typeSpec.Name.Name)] = ifaceInfo
 		}
 	}
+}
+
+// collectLocalTypes extracts local variable type information from a function body.
+// This helps resolve method calls like obj.Method() by knowing obj's type.
+func collectLocalTypes(fn *ast.FuncDecl) map[string]string {
+	types := make(map[string]string)
+	if fn.Body == nil {
+		return types
+	}
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		if stmt, ok := n.(*ast.AssignStmt); ok {
+			for i, lhs := range stmt.Lhs {
+				ident, ok := lhs.(*ast.Ident)
+				if !ok || i >= len(stmt.Rhs) {
+					continue
+				}
+				// v := Type{} or v := &Type{}
+				if comp, ok := stmt.Rhs[i].(*ast.CompositeLit); ok {
+					if t, ok := comp.Type.(*ast.Ident); ok {
+						types[ident.Name] = t.Name
+					}
+				}
+				if unary, ok := stmt.Rhs[i].(*ast.UnaryExpr); ok {
+					if comp, ok := unary.X.(*ast.CompositeLit); ok {
+						if t, ok := comp.Type.(*ast.Ident); ok {
+							types[ident.Name] = t.Name
+						}
+					}
+				}
+				// v := someFunc()
+				if call, ok := stmt.Rhs[i].(*ast.CallExpr); ok {
+					if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
+						if x, ok := sel.X.(*ast.Ident); ok {
+							types[ident.Name] = x.Name
+						}
+					}
+					if fun, ok := call.Fun.(*ast.Ident); ok {
+						types[ident.Name] = fun.Name
+					}
+				}
+			}
+		}
+		return true
+	})
+	return types
 }
 
 // storeCalls temporarily stores call relationships.
@@ -454,23 +471,17 @@ func (cg *CallGraph) linkCalls() {
 		if !ok {
 			continue
 		}
-
 		for _, calleeKey := range info.calleeKeys {
 			callee, ok := cg.Funcs[calleeKey]
 			if !ok {
-				// Check if it's an interface method call
 				if cg.tryLinkInterfaceMethod(caller, calleeKey) {
 					continue
 				}
 				continue
 			}
-
-			// Add to callees (avoid duplicates)
 			if !containsFunc(caller.Callees, callee) {
 				caller.Callees = append(caller.Callees, callee)
 			}
-
-			// Add to callers (avoid duplicates)
 			if !containsFunc(callee.Callers, caller) {
 				callee.Callers = append(callee.Callers, caller)
 			}
@@ -481,23 +492,20 @@ func (cg *CallGraph) linkCalls() {
 
 // tryLinkInterfaceMethod attempts to link an interface method call to implementations.
 func (cg *CallGraph) tryLinkInterfaceMethod(caller *FuncNode, calleeKey string) bool {
-	// Parse the callee key to extract method name
 	parts := strings.SplitN(calleeKey, ":", 2)
 	if len(parts) != 2 {
 		return false
 	}
-
-	// Check if the method name contains a type assertion pattern
-	// e.g., "io:Read" or "pkg:Interface.Method"
 	methodName := parts[1]
 
-	// Look for interfaces that have this method
-	for _, iface := range cg.Interfaces {
+	// Look for interfaces that have this exact method name
+	for ifaceKey, iface := range cg.Interfaces {
 		if !iface.Methods[methodName] {
 			continue
 		}
+		// Use the full interface key for precise matching
+		_ = ifaceKey
 
-		// Find implementations of this interface
 		for implType, implPkg := range iface.Implementations {
 			implKey := FuncKey(implPkg, "("+implType+")."+methodName)
 			if impl, ok := cg.Funcs[implKey]; ok {
@@ -511,14 +519,12 @@ func (cg *CallGraph) tryLinkInterfaceMethod(caller *FuncNode, calleeKey string) 
 			}
 		}
 	}
-
 	return false
 }
 
 // resolveInterfaceImplementations links interfaces to their implementations.
 func (cg *CallGraph) resolveInterfaceImplementations() {
-	// Build a map of method sets for concrete types
-	methodSets := make(map[string]map[string]string) // typeKey -> methodName -> funcKey
+	methodSets := make(map[string]map[string]string)
 
 	for key, node := range cg.Funcs {
 		if node.IsMethod && node.ReceiverType != "" {
@@ -526,7 +532,6 @@ func (cg *CallGraph) resolveInterfaceImplementations() {
 			if methodSets[typeKey] == nil {
 				methodSets[typeKey] = make(map[string]string)
 			}
-			// Extract method name from "(Type).Method" format
 			methodName := node.Name
 			if idx := strings.LastIndex(methodName, "."); idx >= 0 {
 				methodName = methodName[idx+1:]
@@ -535,7 +540,6 @@ func (cg *CallGraph) resolveInterfaceImplementations() {
 		}
 	}
 
-	// For each interface, find concrete types that implement all its methods
 	for _, iface := range cg.Interfaces {
 		for typeKey, methods := range methodSets {
 			typeParts := strings.SplitN(typeKey, ":", 2)
@@ -545,7 +549,6 @@ func (cg *CallGraph) resolveInterfaceImplementations() {
 			typePkg := typeParts[0]
 			typeName := typeParts[1]
 
-			// Check if this type implements all interface methods
 			implementsAll := true
 			for methodName := range iface.Methods {
 				if _, ok := methods[methodName]; !ok {
@@ -556,8 +559,6 @@ func (cg *CallGraph) resolveInterfaceImplementations() {
 
 			if implementsAll {
 				iface.Implementations[typeName] = typePkg
-
-				// Also update the interface implementations map
 				for methodName := range iface.Methods {
 					if funcKey, ok := methods[methodName]; ok {
 						ifaceMethodKey := FuncKey(iface.Package, iface.Name+"."+methodName)
@@ -590,25 +591,26 @@ func recvTypeName(expr ast.Expr) string {
 	return ""
 }
 
-// resolveCallNameWithImports resolves a call expression to a function key,
-// using import information for cross-package calls.
-func resolveCallNameWithImports(fun ast.Expr, currentPkg string, importMap map[string]string) string {
+// resolveCallNameFull resolves a call expression to a function key,
+// using import information and local variable types for better accuracy.
+func resolveCallNameFull(fun ast.Expr, currentPkg string, importMap map[string]string, localTypes map[string]string) string {
 	switch t := fun.(type) {
 	case *ast.Ident:
-		// Direct function call in same package
 		return FuncKey(currentPkg, t.Name)
 
 	case *ast.SelectorExpr:
-		// Method call or package-qualified call
 		if ident, ok := t.X.(*ast.Ident); ok {
-			// Check if it's a package qualifier
+			// Package-qualified call: pkg.Func()
 			if importPath, ok := importMap[ident.Name]; ok {
-				// Package-qualified call: pkg.Func()
 				return FuncKey(importPath, t.Sel.Name)
 			}
 
-			// Method call on a variable - try to infer type
-			// For now, assume it's in the same package
+			// Method call on a variable - try to infer type from local declarations
+			if typeName, ok := localTypes[ident.Name]; ok {
+				return FuncKey(currentPkg, "("+typeName+")."+t.Sel.Name)
+			}
+
+			// Fallback: assume same package method call
 			return FuncKey(currentPkg, t.Sel.Name)
 		}
 
@@ -624,13 +626,27 @@ func resolveCallNameWithImports(fun ast.Expr, currentPkg string, importMap map[s
 	return ""
 }
 
-// resolveCallName resolves a call expression to a function key (legacy interface).
+// resolveCallNameWithImports resolves a call expression to a function key (legacy).
+func resolveCallNameWithImports(fun ast.Expr, currentPkg string, importMap map[string]string) string {
+	return resolveCallNameFull(fun, currentPkg, importMap, nil)
+}
+
+// resolveCallName resolves a call expression to a function key (legacy).
 func resolveCallName(fun ast.Expr, currentPkg string) string {
-	return resolveCallNameWithImports(fun, currentPkg, nil)
+	return resolveCallNameFull(fun, currentPkg, nil, nil)
 }
 
 // isPkgName checks if a name looks like a package name (not a type).
 func isPkgName(name string) bool {
-	// Heuristic: package names are lowercase
 	return len(name) > 0 && name[0] >= 'a' && name[0] <= 'z'
+}
+
+// sortedKeys returns the keys of a map sorted alphabetically.
+func sortedKeys(m map[string]bool) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }

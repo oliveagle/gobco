@@ -35,7 +35,6 @@ func NewIncremental(opts engine.Options, baselineRef string) *IncrementalEngine 
 
 // RunIncremental performs incremental mutation testing based on code changes.
 func (ie *IncrementalEngine) RunIncremental(ctx context.Context) (*report.Report, error) {
-	// Step 1: Get changes from git diff
 	changes, err := ParseGitDiff(ie.dir, ie.baselineRef)
 	if err != nil {
 		return nil, fmt.Errorf("parsing git diff: %w", err)
@@ -48,7 +47,6 @@ func (ie *IncrementalEngine) RunIncremental(ctx context.Context) (*report.Report
 
 	fmt.Fprintf(os.Stderr, "Found %d changed Go files\n", len(changes))
 
-	// Step 2: Build call graph with cross-package support
 	pkgs, err := ie.discoverPackages()
 	if err != nil {
 		return nil, fmt.Errorf("discovering packages: %w", err)
@@ -63,12 +61,10 @@ func (ie *IncrementalEngine) RunIncremental(ctx context.Context) (*report.Report
 	fmt.Fprintf(os.Stderr, "Built call graph with %d functions, %d interfaces\n",
 		len(cg.Funcs), len(cg.Interfaces))
 
-	// Step 3: Compute impact domain with interface awareness
 	domain := ComputeDomain(cg, changes)
 	ie.domain = domain
 	fmt.Fprintf(os.Stderr, "Impact domain: %s\n", domain.String())
 
-	// Step 4: Run with impact-filtered execution
 	return ie.runFiltered(ctx, changes)
 }
 
@@ -129,7 +125,8 @@ func isInImpactDomainFromMutant(m *mutant.Mutant, domain *Domain) bool {
 		return true
 	}
 
-	if lines, ok := domain.ChangedLines[m.RelFile]; ok {
+	absFile := resolveAbsPath(nil, m.RelFile)
+	if lines, ok := domain.ChangedLines[absFile]; ok {
 		if lines[m.Line] {
 			return true
 		}
@@ -173,7 +170,8 @@ func FilterMutants(mutations []*MutantInfo, domain *Domain) []*MutantInfo {
 
 // isInImpactDomain checks if a mutant is within the impact domain.
 func isInImpactDomain(m *MutantInfo, domain *Domain) bool {
-	if lines, ok := domain.ChangedLines[m.File]; ok {
+	absFile := resolveAbsPath(nil, m.File)
+	if lines, ok := domain.ChangedLines[absFile]; ok {
 		if lines[m.Line] {
 			return true
 		}
@@ -257,57 +255,4 @@ func FilterTests(lt *cover.LineToTests, domain *Domain, allTests []string) []str
 	}
 	sort.Strings(tests)
 	return tests
-}
-
-// AffectedFiles returns all files affected by the changes.
-func (d *Domain) AffectedFiles() []string {
-	files := make(map[string]bool)
-	for file := range d.ChangedLines {
-		files[file] = true
-	}
-	result := make([]string, 0, len(files))
-	for file := range files {
-		result = append(result, file)
-	}
-	sort.Strings(result)
-	return result
-}
-
-// AffectedFilesWithGraph returns all files affected by the changes,
-// including files from functions in the impact domain.
-func (d *Domain) AffectedFilesWithGraph(cg *CallGraph) []string {
-	files := make(map[string]bool)
-	for file := range d.ChangedLines {
-		files[file] = true
-	}
-	if cg != nil {
-		for key := range d.All {
-			if node, ok := cg.Funcs[key]; ok {
-				files[node.File] = true
-			}
-		}
-	}
-	result := make([]string, 0, len(files))
-	for file := range files {
-		result = append(result, file)
-	}
-	sort.Strings(result)
-	return result
-}
-
-// AffectedPackages returns all packages affected by the changes.
-func (d *Domain) AffectedPackages() []string {
-	packages := make(map[string]bool)
-	for key := range d.All {
-		parts := strings.SplitN(key, ":", 2)
-		if len(parts) == 2 {
-			packages[parts[0]] = true
-		}
-	}
-	result := make([]string, 0, len(packages))
-	for pkg := range packages {
-		result = append(result, pkg)
-	}
-	sort.Strings(result)
-	return result
 }

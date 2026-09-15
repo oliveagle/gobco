@@ -171,8 +171,8 @@ func GetTestCoverage(lt *cover.LineToTests, domain *Domain, cg *CallGraph) []Tes
 type ImpactSummary struct {
 	ChangedFiles   []string
 	ChangedFuncs   []string
-	ForwardFuncs   []string
-	BackwardFuncs  []string
+	CalleeFuncs   []string
+	CallerFuncs  []string
 	TotalFunctions int
 	AffectedTests  int
 }
@@ -198,19 +198,19 @@ func GetImpactSummary(domain *Domain, cg *CallGraph, lt *cover.LineToTests) *Imp
 		}
 	}
 
-	for key := range domain.Forward {
+	for key := range domain.Callees {
 		if !domain.Changed[key] {
 			if node, ok := cg.Funcs[key]; ok {
-				summary.ForwardFuncs = append(summary.ForwardFuncs,
+				summary.CalleeFuncs = append(summary.CalleeFuncs,
 					fmt.Sprintf("%s:%d-%d", node.File, node.StartLine, node.EndLine))
 			}
 		}
 	}
 
-	for key := range domain.Backward {
+	for key := range domain.Callers {
 		if !domain.Changed[key] {
 			if node, ok := cg.Funcs[key]; ok {
-				summary.BackwardFuncs = append(summary.BackwardFuncs,
+				summary.CallerFuncs = append(summary.CallerFuncs,
 					fmt.Sprintf("%s:%d-%d", node.File, node.StartLine, node.EndLine))
 			}
 		}

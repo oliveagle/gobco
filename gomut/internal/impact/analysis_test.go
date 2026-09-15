@@ -46,8 +46,8 @@ func TestComputeDomain(t *testing.T) {
 	domain := ComputeDomain(cg, changes)
 
 	t.Logf("Changed: %v", domain.Changed)
-	t.Logf("Forward: %v", domain.Forward)
-	t.Logf("Backward: %v", domain.Backward)
+	t.Logf("Callees: %v", domain.Callees)
+	t.Logf("Callers: %v", domain.Callers)
 
 	// B should be in changed
 	if !domain.Changed[FuncKey("pkg", "B")] {
@@ -55,12 +55,12 @@ func TestComputeDomain(t *testing.T) {
 	}
 
 	// C should be in forward (B calls C)
-	if !domain.Forward[FuncKey("pkg", "C")] {
+	if !domain.Callees[FuncKey("pkg", "C")] {
 		t.Error("C should be in forward (B calls C)")
 	}
 
 	// A should be in backward (A calls B)
-	if !domain.Backward[FuncKey("pkg", "A")] {
+	if !domain.Callers[FuncKey("pkg", "A")] {
 		t.Error("A should be in backward (A calls B)")
 	}
 }
@@ -328,7 +328,7 @@ func TestAffectedPackages(t *testing.T) {
 			"pkg1:Func1": true,
 			"pkg2:Func2": true,
 		},
-		Forward: map[string]bool{
+		Callees: map[string]bool{
 			"pkg3:Func3": true,
 		},
 		All: map[string]bool{
@@ -354,8 +354,8 @@ func TestAffectedPackages(t *testing.T) {
 func TestDomainStringWithInterface(t *testing.T) {
 	domain := &Domain{
 		Changed:           map[string]bool{"A": true},
-		Forward:           map[string]bool{"B": true},
-		Backward:          map[string]bool{"C": true},
+		Callees:           map[string]bool{"B": true},
+		Callers:          map[string]bool{"C": true},
 		InterfaceForward:  map[string]bool{"D": true},
 		InterfaceBackward: map[string]bool{"E": true},
 		All:               map[string]bool{"A": true, "B": true, "C": true, "D": true, "E": true},

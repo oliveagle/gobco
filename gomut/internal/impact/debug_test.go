@@ -34,18 +34,18 @@ func TestDebugDomain(t *testing.T) {
 
 	domain := ComputeDomain(cg, changes)
 	fmt.Printf("Changed: %v\n", domain.Changed)
-	fmt.Printf("Forward: %v\n", domain.Forward)
-	fmt.Printf("Backward: %v\n", domain.Backward)
+	fmt.Printf("Callees: %v\n", domain.Callees)
+	fmt.Printf("Callers: %v\n", domain.Callers)
 	fmt.Printf("All: %v\n", domain.All)
 
 	// Verify
 	if len(domain.Changed) != 1 {
 		t.Errorf("Expected 1 changed function, got %d", len(domain.Changed))
 	}
-	if len(domain.Forward) != 2 { // B and C
-		t.Errorf("Expected 2 forward functions (B,C), got %d", len(domain.Forward))
+	if len(domain.Callees) != 2 { // B and C
+		t.Errorf("Expected 2 callee functions (B,C), got %d", len(domain.Callees))
 	}
-	if len(domain.Backward) != 2 { // B and A
-		t.Errorf("Expected 2 backward functions (B,A), got %d", len(domain.Backward))
+	if len(domain.Callers) != 2 { // B and A
+		t.Errorf("Expected 2 caller functions (B,A), got %d", len(domain.Callers))
 	}
 }

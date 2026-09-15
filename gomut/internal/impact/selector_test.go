@@ -8,8 +8,8 @@ func TestSelectMutants(t *testing.T) {
 	// Create a test domain
 	domain := &Domain{
 		Changed:      map[string]bool{"pkg:Func": true},
-		Forward:      map[string]bool{"pkg:Helper": true},
-		Backward:     map[string]bool{"pkg:Caller": true},
+		Callees:      map[string]bool{"pkg:Helper": true},
+		Callers:     map[string]bool{"pkg:Caller": true},
 		All:          map[string]bool{"pkg:Func": true, "pkg:Helper": true, "pkg:Caller": true},
 		ChangedLines: map[string]map[int]bool{"file.go": {10: true, 20: true}},
 	}
@@ -36,8 +36,8 @@ func TestSelectMutants(t *testing.T) {
 func TestIsInDomain(t *testing.T) {
 	domain := &Domain{
 		Changed:      map[string]bool{"pkg:Func": true},
-		Forward:      map[string]bool{"pkg:Helper": true},
-		Backward:     map[string]bool{"pkg:Caller": true},
+		Callees:      map[string]bool{"pkg:Helper": true},
+		Callers:     map[string]bool{"pkg:Caller": true},
 		All:          map[string]bool{"pkg:Func": true, "pkg:Helper": true, "pkg:Caller": true},
 		ChangedLines: map[string]map[int]bool{"file.go": {10: true, 20: true}},
 	}
@@ -94,8 +94,8 @@ func TestGetImpactSummary(t *testing.T) {
 	// Create a domain
 	domain := &Domain{
 		Changed:      map[string]bool{"pkg:A": true},
-		Forward:      map[string]bool{"pkg:B": true},
-		Backward:     map[string]bool{},
+		Callees:      map[string]bool{"pkg:B": true},
+		Callers:     map[string]bool{},
 		All:          map[string]bool{"pkg:A": true, "pkg:B": true},
 		ChangedLines: map[string]map[int]bool{"file.go": {5: true}},
 	}
@@ -114,8 +114,8 @@ func TestGetImpactSummary(t *testing.T) {
 		t.Errorf("Expected 1 changed function, got %d", len(summary.ChangedFuncs))
 	}
 
-	if len(summary.ForwardFuncs) != 1 {
-		t.Errorf("Expected 1 forward function, got %d", len(summary.ForwardFuncs))
+	if len(summary.CalleeFuncs) != 1 {
+		t.Errorf("Expected 1 forward function, got %d", len(summary.CalleeFuncs))
 	}
 }
 

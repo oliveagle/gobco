@@ -68,7 +68,6 @@ func parseDiffWithArgs(dir string, args ...string) ([]Change, error) {
 			continue
 		}
 
-		// For index/staged, we need to get the actual diff
 		change, err := parseFileDiffWithArgs(dir, file, args[:len(args)-2]...)
 		if err != nil {
 			continue
@@ -108,18 +107,20 @@ func parseFileDiffWithArgs(dir, file string, baseArgs ...string) (*Change, error
 	for scanner.Scan() {
 		line := scanner.Text()
 
-		// Parse unified diff hunk header: @@ -old,count +new,count @@
+		// Parse unified diff hunk header: @@ -oldStart,oldCount +newStart,newCount @@
 		if strings.HasPrefix(line, "@@") {
-			header := parseHunkHeader(line)
-			if header != nil {
-				// Add lines in this hunk as changed
-				for i := 0; i < header.newCount; i++ {
-					change.AddedLines = append(change.AddedLines, header.newLine+i)
-				}
-				// Add removed lines
-				for i := 0; i < header.oldCount; i++ {
-					change.RemovedLines = append(change.RemovedLines, header.oldLine+i)
-				}
+			h := parseHunkHeader(line)
+			if h == nil {
+				continue
+			}
+
+			// Added lines in the new version (the "+" side)
+			for i := 0; i < h.newCount; i++ {
+				change.AddedLines = append(change.AddedLines, h.newLine+i)
+			}
+			// Removed lines in the old version (the "-" side)
+			for i := 0; i < h.oldCount; i++ {
+				change.RemovedLines = append(change.RemovedLines, h.oldLine+i)
 			}
 		}
 	}
@@ -133,15 +134,14 @@ func parseFileDiffWithArgs(dir, file string, baseArgs ...string) (*Change, error
 
 // hunkHeader represents a parsed hunk header.
 type hunkHeader struct {
-	oldLine  int
-	oldCount int
-	newLine  int
-	newCount int
+	oldLine  int // start line in the old version
+	oldCount int // number of lines from old version in this hunk
+	newLine  int // start line in the new version
+	newCount int // number of lines from new version in this hunk
 }
 
 // parseHunkHeader parses a unified diff hunk header.
 func parseHunkHeader(line string) *hunkHeader {
-	// Format: @@ -oldLine,oldCount +newLine,newCount @@
 	if !strings.HasPrefix(line, "@@ ") {
 		return nil
 	}
@@ -153,7 +153,7 @@ func parseHunkHeader(line string) *hunkHeader {
 
 	h := &hunkHeader{}
 
-	// Parse -oldLine,oldCount
+	// Parse -oldStart,oldCount
 	oldPart := strings.TrimPrefix(parts[1], "-")
 	if idx := strings.Index(oldPart, ","); idx >= 0 {
 		h.oldLine, _ = strconv.Atoi(oldPart[:idx])
@@ -163,7 +163,7 @@ func parseHunkHeader(line string) *hunkHeader {
 		h.oldCount = 1
 	}
 
-	// Parse +newLine,newCount
+	// Parse +newStart,newCount
 	newPart := strings.TrimPrefix(parts[2], "+")
 	if idx := strings.Index(newPart, ","); idx >= 0 {
 		h.newLine, _ = strconv.Atoi(newPart[:idx])

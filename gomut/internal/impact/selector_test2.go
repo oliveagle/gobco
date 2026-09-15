@@ -127,7 +127,7 @@ func TestGetImpactSummaryWithTestCoverageWithData(t *testing.T) {
 	}
 }
 
-func TestGetImpactSummaryWithBackwardFuncs(t *testing.T) {
+func TestGetImpactSummaryWithCallerFuncs(t *testing.T) {
 	cg := &CallGraph{
 		Funcs:  make(map[string]*FuncNode),
 		ByFile: make(map[string][]*FuncNode),
@@ -140,8 +140,8 @@ func TestGetImpactSummaryWithBackwardFuncs(t *testing.T) {
 
 	domain := &Domain{
 		Changed:      map[string]bool{"pkg:A": true},
-		Forward:      map[string]bool{"pkg:B": true},
-		Backward:     map[string]bool{},
+		Callees:      map[string]bool{"pkg:B": true},
+		Callers:     map[string]bool{},
 		All:          map[string]bool{"pkg:A": true, "pkg:B": true},
 		ChangedLines: map[string]map[int]bool{"file.go": {5: true}},
 	}
@@ -160,11 +160,11 @@ func TestGetImpactSummaryWithBackwardFuncs(t *testing.T) {
 		t.Errorf("Expected 1 changed function, got %d", len(summary.ChangedFuncs))
 	}
 
-	if len(summary.ForwardFuncs) != 1 {
-		t.Errorf("Expected 1 forward function, got %d", len(summary.ForwardFuncs))
+	if len(summary.CalleeFuncs) != 1 {
+		t.Errorf("Expected 1 forward function, got %d", len(summary.CalleeFuncs))
 	}
 
-	if len(summary.BackwardFuncs) != 0 {
-		t.Errorf("Expected 0 backward functions, got %d", len(summary.BackwardFuncs))
+	if len(summary.CallerFuncs) != 0 {
+		t.Errorf("Expected 0 backward functions, got %d", len(summary.CallerFuncs))
 	}
 }

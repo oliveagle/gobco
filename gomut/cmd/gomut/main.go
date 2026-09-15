@@ -226,8 +226,8 @@ func runImpactAnalysis(dir, baselineRef string, patterns []string, stderr *os.Fi
 
 	fmt.Fprintf(stderr, "\nImpact Analysis:\n")
 	fmt.Fprintf(stderr, "  Directly changed: %d functions\n", len(domain.Changed))
-	fmt.Fprintf(stderr, "  Forward (callees): %d functions\n", len(domain.Forward))
-	fmt.Fprintf(stderr, "  Backward (callers): %d functions\n", len(domain.Backward))
+	fmt.Fprintf(stderr, "  Callees (dependencies): %d functions\n", len(domain.Callees))
+	fmt.Fprintf(stderr, "  Callers (need retest): %d functions\n", len(domain.Callers))
 	fmt.Fprintf(stderr, "  Total impact domain: %d functions\n", len(domain.All))
 
 	// Show affected functions with details
@@ -245,10 +245,10 @@ func runImpactAnalysis(dir, baselineRef string, patterns []string, stderr *os.Fi
 		}
 	}
 
-	if len(domain.Forward) > 0 {
-		fmt.Fprintf(stderr, "\nForward propagation (callees - functions called by changed code):\n")
-		keys := make([]string, 0, len(domain.Forward))
-		for key := range domain.Forward {
+	if len(domain.Callees) > 0 {
+		fmt.Fprintf(stderr, "\nCallees (functions called by changed code - informational only):\n")
+		keys := make([]string, 0, len(domain.Callees))
+		for key := range domain.Callees {
 			if !domain.Changed[key] {
 				keys = append(keys, key)
 			}
@@ -261,10 +261,10 @@ func runImpactAnalysis(dir, baselineRef string, patterns []string, stderr *os.Fi
 		}
 	}
 
-	if len(domain.Backward) > 0 {
-		fmt.Fprintf(stderr, "\nBackward propagation (callers - functions that call changed code):\n")
-		keys := make([]string, 0, len(domain.Backward))
-		for key := range domain.Backward {
+	if len(domain.Callers) > 0 {
+		fmt.Fprintf(stderr, "\nCallers (functions that call changed code - need retest):\n")
+		keys := make([]string, 0, len(domain.Callers))
+		for key := range domain.Callers {
 			if !domain.Changed[key] {
 				keys = append(keys, key)
 			}

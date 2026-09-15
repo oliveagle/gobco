@@ -7,8 +7,8 @@ import (
 func TestFilterMutants(t *testing.T) {
 	domain := &Domain{
 		Changed:      map[string]bool{"pkg:Func": true},
-		Forward:      map[string]bool{"pkg:Helper": true},
-		Backward:     map[string]bool{"pkg:Caller": true},
+		Callees:      map[string]bool{"pkg:Helper": true},
+		Callers:     map[string]bool{"pkg:Caller": true},
 		All:          map[string]bool{"pkg:Func": true, "pkg:Helper": true, "pkg:Caller": true},
 		ChangedLines: map[string]map[int]bool{"file.go": {10: true, 20: true}},
 	}
@@ -41,8 +41,8 @@ func TestFilterMutantsNilDomain(t *testing.T) {
 func TestIsInImpactDomain(t *testing.T) {
 	domain := &Domain{
 		Changed:      map[string]bool{"pkg:Func": true},
-		Forward:      map[string]bool{"pkg:Helper": true},
-		Backward:     map[string]bool{"pkg:Caller": true},
+		Callees:      map[string]bool{"pkg:Helper": true},
+		Callers:     map[string]bool{"pkg:Caller": true},
 		All:          map[string]bool{"pkg:Func": true, "pkg:Helper": true, "pkg:Caller": true},
 		ChangedLines: map[string]map[int]bool{"file.go": {10: true, 20: true}},
 	}

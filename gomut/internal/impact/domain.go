@@ -10,23 +10,24 @@ import (
 type Domain struct {
 	// Changed is the set of directly changed function keys.
 	Changed map[string]bool
-	// Forward is the set of functions affected by forward propagation (callees).
-	// These are functions that the changed code calls, whose behavior might
-	// affect the changed code's correctness.
-	Forward map[string]bool
-	// Backward is the set of functions affected by backward propagation (callers).
-	// These are functions that call the changed code, and might be affected
-	// if the changed code's behavior changes.
-	Backward map[string]bool
+	// Callers is the set of functions that call changed code (transitively).
+	// If a changed function's behavior changes, callers need retesting.
+	// This is the PRIMARY propagation direction for mutation testing.
+	Callers map[string]bool
+	// Callees is the set of functions called by changed code (transitively).
+	// These are informational — they didn't change, so they don't need retesting.
+	// Included for visibility into what the changed code depends on.
+	Callees map[string]bool
 	// InterfaceForward is the set of interface implementations affected by
 	// changes to interface methods.
 	InterfaceForward map[string]bool
 	// InterfaceBackward is the set of interface definitions affected by
 	// changes to implementations.
 	InterfaceBackward map[string]bool
-	// All is the union of Changed + Forward + Backward + InterfaceForward + InterfaceBackward.
+	// All is the set of functions that need retesting:
+	// Changed + Callers + InterfaceForward + InterfaceBackward.
 	All map[string]bool
-	// ChangedLines maps file paths to affected line numbers.
+	// ChangedLines maps absolute file paths to affected line numbers.
 	ChangedLines map[string]map[int]bool
 	// ChangedPackages is the set of packages with changes.
 	ChangedPackages map[string]bool
@@ -34,22 +35,18 @@ type Domain struct {
 
 // ComputeDomain calculates the impact domain for a set of changes.
 //
-// Forward propagation: changed function -> all callees (transitively)
+// For mutation testing, only functions whose behavior might have changed
+// (or whose callers depend on changed behavior) need retesting.
 //
-//	If function A calls B and B is changed, A's correctness might be affected
-//	if B's behavior changes.
-//
-// Backward propagation: changed function -> all callers (transitively)
-//
-//	If function A calls B and B is changed, A might need to be retested.
-//
-// Interface propagation: changes to interface methods propagate to implementations,
-// and changes to implementations propagate to interface callers.
+// Propagation:
+//   - Changed -> Callers (backward): if B changes, A (which calls B) needs retesting.
+//   - Changed -> Callees (informational): what the changed code depends on.
+//   - Interface methods <-> implementations: bidirectional.
 func ComputeDomain(cg *CallGraph, changes []Change) *Domain {
 	d := &Domain{
 		Changed:           make(map[string]bool),
-		Forward:           make(map[string]bool),
-		Backward:          make(map[string]bool),
+		Callers:           make(map[string]bool),
+		Callees:           make(map[string]bool),
 		InterfaceForward:  make(map[string]bool),
 		InterfaceBackward: make(map[string]bool),
 		All:               make(map[string]bool),
@@ -59,13 +56,13 @@ func ComputeDomain(cg *CallGraph, changes []Change) *Domain {
 
 	// Step 1: Identify changed functions from changes
 	for _, change := range changes {
-		d.ChangedLines[change.File] = make(map[int]bool)
+		absFile := resolveAbsPath(cg, change.File)
+		d.ChangedLines[absFile] = make(map[int]bool)
 		for _, line := range change.AddedLines {
-			d.ChangedLines[change.File][line] = true
+			d.ChangedLines[absFile][line] = true
 		}
 
-		// Find functions that overlap with changed lines
-		nodes := findNodesByFile(cg, change.File)
+		nodes := findNodesByFile(cg, absFile)
 		for _, node := range nodes {
 			if overlaps(node, change) {
 				key := FuncKey(node.Package, node.Name)
@@ -80,35 +77,34 @@ func ComputeDomain(cg *CallGraph, changes []Change) *Domain {
 		cg.checkInterfaceChanges(d, change)
 	}
 
-	// Step 2: Forward propagation (callees)
+	// Step 2: Backward propagation — callers of changed functions.
+	// These are the functions that NEED RETESTING.
 	for key := range d.Changed {
 		node, ok := cg.Funcs[key]
 		if !ok {
 			continue
 		}
-		forwardWalk(node, d.Forward, make(map[string]bool))
+		walkCallers(node, d.Callers, make(map[string]bool))
 	}
 
-	// Step 3: Backward propagation (callers)
+	// Step 3: Forward propagation — callees of changed functions.
+	// Informational only; these don't need retesting.
 	for key := range d.Changed {
 		node, ok := cg.Funcs[key]
 		if !ok {
 			continue
 		}
-		backwardWalk(node, d.Backward, make(map[string]bool))
+		walkCallees(node, d.Callees, make(map[string]bool))
 	}
 
 	// Step 4: Interface propagation
 	cg.computeInterfacePropagation(d)
 
-	// Step 5: Compute union
+	// Step 5: Compute "All" = functions that need retesting
 	for key := range d.Changed {
 		d.All[key] = true
 	}
-	for key := range d.Forward {
-		d.All[key] = true
-	}
-	for key := range d.Backward {
+	for key := range d.Callers {
 		d.All[key] = true
 	}
 	for key := range d.InterfaceForward {
@@ -117,19 +113,44 @@ func ComputeDomain(cg *CallGraph, changes []Change) *Domain {
 	for key := range d.InterfaceBackward {
 		d.All[key] = true
 	}
+	// Note: Callees are NOT in All — they don't need retesting.
 
 	return d
 }
 
+// resolveAbsPath tries to resolve a relative change path to an absolute path
+// matching a key in the ByFile map.
+func resolveAbsPath(cg *CallGraph, file string) string {
+	if cg == nil {
+		return file
+	}
+	// Exact match first
+	if _, ok := cg.ByFile[file]; ok {
+		return file
+	}
+	// Try matching by suffix against known absolute paths
+	for absPath := range cg.ByFile {
+		if strings.HasSuffix(absPath, "/"+file) || strings.HasSuffix(absPath, "/"+filepath.Base(file)) {
+			return absPath
+		}
+	}
+	// Try matching just the base name (less precise, last resort)
+	base := filepath.Base(file)
+	for absPath := range cg.ByFile {
+		if filepath.Base(absPath) == base {
+			return absPath
+		}
+	}
+	return file
+}
+
 // checkInterfaceChanges checks if changes affect interface definitions.
 func (cg *CallGraph) checkInterfaceChanges(d *Domain, change Change) {
-	// Find interface definitions in the changed file
+	absFile := resolveAbsPath(cg, change.File)
 	for _, iface := range cg.Interfaces {
-		// Check if this interface is in the changed file
 		ifaceKey := FuncKey(iface.Package, iface.Name)
 		if node, ok := cg.Funcs[ifaceKey]; ok {
-			if node.File == change.File || filepath.Base(node.File) == filepath.Base(change.File) {
-				// Check if any changed line overlaps with the interface definition
+			if node.File == absFile {
 				for _, line := range change.AddedLines {
 					if line >= node.StartLine && line <= node.EndLine {
 						d.Changed[ifaceKey] = true
@@ -144,8 +165,6 @@ func (cg *CallGraph) checkInterfaceChanges(d *Domain, change Change) {
 
 // computeInterfacePropagation handles interface-related impact propagation.
 func (cg *CallGraph) computeInterfacePropagation(d *Domain) {
-	// For each changed function, check if it's an interface method
-	// or an implementation of an interface method
 	for key := range d.Changed {
 		parts := strings.SplitN(key, ":", 2)
 		if len(parts) != 2 {
@@ -154,7 +173,7 @@ func (cg *CallGraph) computeInterfacePropagation(d *Domain) {
 		pkg := parts[0]
 		name := parts[1]
 
-		// Check if this is an interface method
+		// Check if this is an interface method definition
 		// Interface methods look like "InterfaceName.MethodName"
 		if idx := strings.Index(name, "."); idx > 0 {
 			ifaceName := name[:idx]
@@ -163,7 +182,7 @@ func (cg *CallGraph) computeInterfacePropagation(d *Domain) {
 			ifaceKey := FuncKey(pkg, ifaceName)
 			if iface, ok := cg.Interfaces[ifaceKey]; ok {
 				if iface.Methods[methodName] {
-					// This is an interface method change - propagate to implementations
+					// Propagate to all implementations
 					for implType, implPkg := range iface.Implementations {
 						implKey := FuncKey(implPkg, "("+implType+")."+methodName)
 						if _, exists := cg.Funcs[implKey]; exists {
@@ -176,17 +195,20 @@ func (cg *CallGraph) computeInterfacePropagation(d *Domain) {
 
 		// Check if this is an implementation of an interface method
 		if node, ok := cg.Funcs[key]; ok && node.IsMethod {
-			// Find interfaces that have this method name
 			for _, iface := range cg.Interfaces {
+				// Check if this receiver type implements this interface
+				if implPkg, ok := iface.Implementations[node.ReceiverType]; ok {
+					if implPkg != node.Package {
+						continue
+					}
+				}
+
 				for methodName := range iface.Methods {
-					// Extract method name from "(Type).Method" format
 					methodPart := name
 					if idx := strings.LastIndex(name, "."); idx > 0 {
 						methodPart = name[idx+1:]
 					}
-
 					if methodPart == methodName {
-						// This implementation satisfies an interface method
 						ifaceMethodKey := FuncKey(iface.Package, iface.Name+"."+methodName)
 						if _, exists := cg.Funcs[ifaceMethodKey]; exists {
 							d.InterfaceBackward[ifaceMethodKey] = true
@@ -198,40 +220,34 @@ func (cg *CallGraph) computeInterfacePropagation(d *Domain) {
 	}
 }
 
-// findNodesByFile finds function nodes by file path, handling both relative and absolute paths.
+// findNodesByFile finds function nodes by file path.
 func findNodesByFile(cg *CallGraph, file string) []*FuncNode {
-	// First try direct match
+	// Exact match
 	if nodes, ok := cg.ByFile[file]; ok {
 		return nodes
 	}
-
-	// Try to find by base name
+	// Try suffix match against absolute paths
+	for filePath, nodes := range cg.ByFile {
+		if strings.HasSuffix(filePath, "/"+file) || strings.HasSuffix(filePath, "/"+filepath.Base(file)) {
+			return nodes
+		}
+	}
+	// Base name match (less precise)
 	baseName := filepath.Base(file)
 	for filePath, nodes := range cg.ByFile {
 		if filepath.Base(filePath) == baseName {
 			return nodes
 		}
 	}
-
-	// Try to find by suffix
-	for filePath, nodes := range cg.ByFile {
-		if strings.HasSuffix(filePath, "/"+file) || strings.HasSuffix(filePath, "/"+baseName) {
-			return nodes
-		}
-	}
-
 	return nil
 }
 
 // overlaps checks if a function node overlaps with a change.
 func overlaps(node *FuncNode, change Change) bool {
-	if node.File != change.File {
-		// Check if the file paths refer to the same file
-		if filepath.Base(node.File) != filepath.Base(change.File) {
-			return false
-		}
+	absFile := resolveAbsPath(nil, change.File)
+	if node.File != absFile && filepath.Base(node.File) != filepath.Base(change.File) {
+		return false
 	}
-	// Check if any changed line falls within the function's line range
 	for _, line := range change.AddedLines {
 		if line >= node.StartLine && line <= node.EndLine {
 			return true
@@ -240,52 +256,40 @@ func overlaps(node *FuncNode, change Change) bool {
 	return false
 }
 
-// forwardWalk traverses callees transitively.
-func forwardWalk(node *FuncNode, visited map[string]bool, seen map[string]bool) {
+// walkCallers traverses callers transitively (backward walk).
+func walkCallers(node *FuncNode, visited map[string]bool, seen map[string]bool) {
 	key := FuncKey(node.Package, node.Name)
 	if seen[key] {
 		return
 	}
 	seen[key] = true
 	visited[key] = true
-
-	for _, callee := range node.Callees {
-		forwardWalk(callee, visited, seen)
+	for _, caller := range node.Callers {
+		walkCallers(caller, visited, seen)
 	}
 }
 
-// backwardWalk traverses callers transitively.
-func backwardWalk(node *FuncNode, visited map[string]bool, seen map[string]bool) {
+// walkCallees traverses callees transitively (forward walk).
+func walkCallees(node *FuncNode, visited map[string]bool, seen map[string]bool) {
 	key := FuncKey(node.Package, node.Name)
 	if seen[key] {
 		return
 	}
 	seen[key] = true
 	visited[key] = true
-
-	for _, caller := range node.Callers {
-		backwardWalk(caller, visited, seen)
+	for _, callee := range node.Callees {
+		walkCallees(callee, visited, seen)
 	}
 }
 
 // AffectedLines returns all line numbers in the impact domain for a given file.
-// It includes lines from directly changed code AND lines from all functions
-// in the impact domain (forward + backward propagation).
 func (d *Domain) AffectedLines(file string) []int {
 	lines := make(map[int]bool)
-
-	// Add directly changed lines
 	if fileLines, ok := d.ChangedLines[file]; ok {
 		for line := range fileLines {
 			lines[line] = true
 		}
 	}
-
-	// Add lines from functions in the impact domain
-	// This requires the call graph to get function line ranges.
-	// We store function ranges in a separate structure for this purpose.
-	// For now, we rely on ChangedLines which already includes the right lines.
-
 	result := make([]int, 0, len(lines))
 	for line := range lines {
 		result = append(result, line)
@@ -298,15 +302,11 @@ func (d *Domain) AffectedLines(file string) []int {
 // for a given file, using the call graph for complete coverage.
 func (d *Domain) AffectedLinesWithGraph(file string, cg *CallGraph) []int {
 	lines := make(map[int]bool)
-
-	// Add directly changed lines
 	if fileLines, ok := d.ChangedLines[file]; ok {
 		for line := range fileLines {
 			lines[line] = true
 		}
 	}
-
-	// Add lines from functions in the impact domain that are in this file
 	if cg != nil {
 		for key := range d.All {
 			if node, ok := cg.Funcs[key]; ok {
@@ -318,7 +318,6 @@ func (d *Domain) AffectedLinesWithGraph(file string, cg *CallGraph) []int {
 			}
 		}
 	}
-
 	result := make([]int, 0, len(lines))
 	for line := range lines {
 		result = append(result, line)
@@ -327,14 +326,72 @@ func (d *Domain) AffectedLinesWithGraph(file string, cg *CallGraph) []int {
 	return result
 }
 
+// AffectedFiles returns all files affected by the changes.
+func (d *Domain) AffectedFiles() []string {
+	files := make(map[string]bool)
+	for file := range d.ChangedLines {
+		files[file] = true
+	}
+	for key := range d.All {
+		parts := strings.SplitN(key, ":", 2)
+		if len(parts) == 2 {
+			_ = parts
+		}
+	}
+	result := make([]string, 0, len(files))
+	for file := range files {
+		result = append(result, file)
+	}
+	sort.Strings(result)
+	return result
+}
+
+// AffectedFilesWithGraph returns all files affected by the changes.
+func (d *Domain) AffectedFilesWithGraph(cg *CallGraph) []string {
+	files := make(map[string]bool)
+	for file := range d.ChangedLines {
+		files[file] = true
+	}
+	if cg != nil {
+		for key := range d.All {
+			if node, ok := cg.Funcs[key]; ok {
+				files[node.File] = true
+			}
+		}
+	}
+	result := make([]string, 0, len(files))
+	for file := range files {
+		result = append(result, file)
+	}
+	sort.Strings(result)
+	return result
+}
+
+// AffectedPackages returns all packages affected by the changes.
+func (d *Domain) AffectedPackages() []string {
+	packages := make(map[string]bool)
+	for key := range d.All {
+		parts := strings.SplitN(key, ":", 2)
+		if len(parts) == 2 {
+			packages[parts[0]] = true
+		}
+	}
+	result := make([]string, 0, len(packages))
+	for pkg := range packages {
+		result = append(result, pkg)
+	}
+	sort.Strings(result)
+	return result
+}
+
 // String returns a human-readable summary of the domain.
 func (d *Domain) String() string {
 	return "changed=" + itoa(len(d.Changed)) +
-		" forward=" + itoa(len(d.Forward)) +
-		" backward=" + itoa(len(d.Backward)) +
+		" callers=" + itoa(len(d.Callers)) +
+		" callees=" + itoa(len(d.Callees)) +
 		" interface_forward=" + itoa(len(d.InterfaceForward)) +
 		" interface_backward=" + itoa(len(d.InterfaceBackward)) +
-		" total=" + itoa(len(d.All))
+		" need_retest=" + itoa(len(d.All))
 }
 
 func itoa(n int) string {

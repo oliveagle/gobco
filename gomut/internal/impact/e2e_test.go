@@ -67,17 +67,17 @@ func TestImpactAnalysisEndToEnd(t *testing.T) {
 			t.Logf("  %s", k)
 		}
 	}
-	if len(domain.Forward) > 0 {
+	if len(domain.Callees) > 0 {
 		t.Log("Forward (callees):")
-		for k := range domain.Forward {
+		for k := range domain.Callees {
 			if !domain.Changed[k] {
 				t.Logf("  %s", k)
 			}
 		}
 	}
-	if len(domain.Backward) > 0 {
+	if len(domain.Callers) > 0 {
 		t.Log("Backward (callers):")
-		for k := range domain.Backward {
+		for k := range domain.Callers {
 			if !domain.Changed[k] {
 				t.Logf("  %s", k)
 			}

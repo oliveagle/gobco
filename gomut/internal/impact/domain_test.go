@@ -39,8 +39,8 @@ func TestAffectedLinesEmpty(t *testing.T) {
 func TestString(t *testing.T) {
 	domain := &Domain{
 		Changed:  map[string]bool{"A": true, "B": true},
-		Forward:  map[string]bool{"C": true},
-		Backward: map[string]bool{"D": true},
+		Callees:  map[string]bool{"C": true},
+		Callers: map[string]bool{"D": true},
 		All:      map[string]bool{"A": true, "B": true, "C": true, "D": true},
 	}
 
@@ -49,14 +49,14 @@ func TestString(t *testing.T) {
 	if !strings.Contains(s, "changed=2") {
 		t.Error("Expected string to contain 'changed=2'")
 	}
-	if !strings.Contains(s, "forward=1") {
-		t.Error("Expected string to contain 'forward=1'")
+	if !strings.Contains(s, "callees=1") {
+		t.Error("Expected string to contain 'callees=1'")
 	}
-	if !strings.Contains(s, "backward=1") {
-		t.Error("Expected string to contain 'backward=1'")
+	if !strings.Contains(s, "callers=1") {
+		t.Error("Expected string to contain 'callers=1'")
 	}
-	if !strings.Contains(s, "total=4") {
-		t.Error("Expected string to contain 'total=4'")
+	if !strings.Contains(s, "need_retest=4") {
+		t.Error("Expected string to contain 'need_retest=4'")
 	}
 }
 
@@ -170,7 +170,7 @@ func TestForwardWalk(t *testing.T) {
 	visited := make(map[string]bool)
 	seen := make(map[string]bool)
 
-	forwardWalk(a, visited, seen)
+	walkCallees(a, visited, seen)
 
 	if !visited[FuncKey("pkg", "A")] {
 		t.Error("Expected A to be visited")
@@ -193,7 +193,7 @@ func TestBackwardWalk(t *testing.T) {
 	visited := make(map[string]bool)
 	seen := make(map[string]bool)
 
-	backwardWalk(c, visited, seen)
+	walkCallers(c, visited, seen)
 
 	if !visited[FuncKey("pkg", "C")] {
 		t.Error("Expected C to be visited")
@@ -245,15 +245,15 @@ func TestComputeDomainComplex(t *testing.T) {
 	}
 
 	// C should be in forward (B calls C)
-	if !domain.Forward[FuncKey("pkg", "C")] {
+	if !domain.Callees[FuncKey("pkg", "C")] {
 		t.Error("C should be in forward (B calls C)")
 	}
 
 	// A and D should be in backward (A and D call B)
-	if !domain.Backward[FuncKey("pkg", "A")] {
+	if !domain.Callers[FuncKey("pkg", "A")] {
 		t.Error("A should be in backward (A calls B)")
 	}
-	if !domain.Backward[FuncKey("pkg", "D")] {
+	if !domain.Callers[FuncKey("pkg", "D")] {
 		t.Error("D should be in backward (D calls B)")
 	}
 
@@ -276,11 +276,11 @@ func TestComputeDomainNoChanges(t *testing.T) {
 	if len(domain.Changed) != 0 {
 		t.Errorf("Expected 0 changed functions, got %d", len(domain.Changed))
 	}
-	if len(domain.Forward) != 0 {
-		t.Errorf("Expected 0 forward functions, got %d", len(domain.Forward))
+	if len(domain.Callees) != 0 {
+		t.Errorf("Expected 0 callee functions, got %d", len(domain.Callees))
 	}
-	if len(domain.Backward) != 0 {
-		t.Errorf("Expected 0 backward functions, got %d", len(domain.Backward))
+	if len(domain.Callers) != 0 {
+		t.Errorf("Expected 0 caller functions, got %d", len(domain.Callers))
 	}
 }
 
@@ -292,7 +292,7 @@ func TestBackwardWalkCycle(t *testing.T) {
 	visited := make(map[string]bool)
 	seen := make(map[string]bool)
 
-	backwardWalk(a, visited, seen)
+	walkCallers(a, visited, seen)
 
 	if !visited[FuncKey("pkg", "A")] {
 		t.Error("Expected A to be visited")
@@ -310,7 +310,7 @@ func TestForwardWalkCycle(t *testing.T) {
 	visited := make(map[string]bool)
 	seen := make(map[string]bool)
 
-	forwardWalk(a, visited, seen)
+	walkCallees(a, visited, seen)
 
 	if !visited[FuncKey("pkg", "A")] {
 		t.Error("Expected A to be visited")

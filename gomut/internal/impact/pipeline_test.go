@@ -75,8 +75,8 @@ go 1.21
 
 	t.Logf("Domain: %s", domain.String())
 	t.Logf("Changed: %v", domain.Changed)
-	t.Logf("Forward: %v", domain.Forward)
-	t.Logf("Backward: %v", domain.Backward)
+	t.Logf("Callees: %v", domain.Callees)
+	t.Logf("Callers: %v", domain.Callers)
 
 	// ServiceFunc should be changed
 	hasChanged := false
@@ -94,12 +94,12 @@ go 1.21
 
 	// UtilFunc should be in forward (ServiceFunc calls it)
 	hasForward := false; _ = hasForward
-	for k := range domain.Forward {
+	for k := range domain.Callees {
 		if k == "example.com/test/pkg/b:UtilFunc" || k == "pkg/b:UtilFunc" {
 			hasForward = true
 		}
 	}
-	if len(domain.Forward) > 0 {
-		t.Logf("Forward propagation working: %d functions", len(domain.Forward))
+	if len(domain.Callees) > 0 {
+		t.Logf("Forward propagation working: %d functions", len(domain.Callees))
 	}
 }
