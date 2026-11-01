@@ -62,6 +62,12 @@ type Mutant struct {
 	RelFile  string // module-relative path, for display
 	Line     int
 	Desc     string
+	// Offset is the byte offset of the patch inside the original file. It
+	// distinguishes two mutants that share operator+file+line+description
+	// (e.g. the two "constant 0 replaced with 1" sites of a line that holds
+	// two identical literals) - without it the package cache collapses them
+	// into a single status.
+	Offset   int
 	Content  string // full mutated file content
 	Dir      string // absolute package directory
 	FileName string // base file name

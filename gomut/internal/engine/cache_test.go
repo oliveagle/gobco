@@ -345,3 +345,33 @@ func TestCoverageCache(t *testing.T) {
 		t.Fatalf("third run reused the coverage cache after a test edit; logs=%v", third.msg)
 	}
 }
+
+// TestCacheLoadKeepsSameLineMutantsApart guards the package cache against
+// two mutants that share operator+file+line+description but sit at different
+// offsets of the line - for example the two "constant 0 replaced with 1"
+// sites of a line that holds two identical literals. They are different
+// mutants and can have different outcomes, so the cache must not hand one
+// of them the status of the other.
+func TestCacheLoadKeepsSameLineMutantsApart(t *testing.T) {
+	dir := t.TempDir()
+	files := []srcFile{{name: "foo.go", content: "package foo\n"}}
+	p := listPkg{ImportPath: "example.com/foo", Dir: dir}
+	muts := []*mutant.Mutant{
+		{Operator: "Constant", Package: "example.com/foo", File: "example.com/foo/foo.go", Line: 13, Offset: 40, Desc: "constant 0 replaced with 1", Status: mutant.Killed},
+		{Operator: "Constant", Package: "example.com/foo", File: "example.com/foo/foo.go", Line: 13, Offset: 52, Desc: "constant 0 replaced with 1", Status: mutant.Survived},
+	}
+	e := New(Options{})
+	e.cacheStore(p, muts, nil, nil, files)
+
+	muts[0].Status = ""
+	muts[1].Status = ""
+	if !e.cacheLoad(p, muts, nil, nil, files) {
+		t.Fatalf("cache load: miss (expected hit)")
+	}
+	if got, want := muts[0].Status, mutant.Killed; got != want {
+		t.Errorf("first constant mutant status = %q, want %q", got, want)
+	}
+	if got, want := muts[1].Status, mutant.Survived; got != want {
+		t.Errorf("second constant mutant status = %q, want %q", got, want)
+	}
+}

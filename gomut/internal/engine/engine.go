@@ -288,6 +288,7 @@ func (e *Engine) processPackage(ctx context.Context, p listPkg) ([]*mutant.Mutan
 					RelFile:  sf.rel,
 					Line:     site.Line,
 					Desc:     site.Desc,
+					Offset:   site.Patch.Start,
 					Content:  content,
 					Dir:      p.Dir,
 					FileName: sf.name,

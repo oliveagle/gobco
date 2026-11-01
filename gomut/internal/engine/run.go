@@ -189,8 +189,15 @@ type cachedMutant struct {
 }
 
 // mutantKey uniquely identifies a single-site mutant.
+// mutantKey identifies a mutant inside the package cache. The patch offset
+// is part of the key: two sites on the same line can carry the very same
+// operator and description (two "constant 0 replaced with 1" literals, two
+// "||" of the same boolean expression), and they are different mutants with
+// different outcomes. Without the offset the cache would hand one of them
+// the status of the other.
 func mutantKey(m *mutant.Mutant) string {
-	return m.Operator + "|" + m.File + "|" + strconv.Itoa(m.Line) + "|" + m.Desc
+	return m.Operator + "|" + m.File + "|" + strconv.Itoa(m.Line) + "|" +
+		strconv.Itoa(m.Offset) + "|" + m.Desc
 }
 
 // selectedTestsHash fingerprints the source of the tests selected for a
