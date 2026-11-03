@@ -71,7 +71,7 @@ func (ie *IncrementalEngine) RunIncremental(ctx context.Context) (*report.Report
 // runFiltered performs filtered mutation testing based on the impact domain.
 func (ie *IncrementalEngine) runFiltered(ctx context.Context, changes []Change) (*report.Report, error) {
 	mutantFilter := func(m *mutant.Mutant) bool {
-		return isInImpactDomainFromMutant(m, ie.domain)
+		return isInImpactDomainFromMutant(m, ie.domain, ie.callGraph)
 	}
 
 	testFilter := func(m *mutant.Mutant, tests []string) []string {
@@ -120,12 +120,16 @@ func (ie *IncrementalEngine) filterTestsByDomain(m *mutant.Mutant, tests []strin
 }
 
 // isInImpactDomainFromMutant checks if a mutant is within the impact domain.
-func isInImpactDomainFromMutant(m *mutant.Mutant, domain *Domain) bool {
+func isInImpactDomainFromMutant(m *mutant.Mutant, domain *Domain, cg *CallGraph) bool {
 	if domain == nil {
 		return true
 	}
 
-	absFile := resolveAbsPath(nil, m.RelFile)
+	// ChangedLines is keyed by the absolute path supplied by the call graph,
+	// while mutants carry a repository-relative path. Resolve the mutant path
+	// against the graph before comparing, otherwise every direct-line match is
+	// missed and incremental mode silently filters out all generated mutants.
+	absFile := resolveAbsPath(cg, m.RelFile)
 	if lines, ok := domain.ChangedLines[absFile]; ok {
 		if lines[m.Line] {
 			return true

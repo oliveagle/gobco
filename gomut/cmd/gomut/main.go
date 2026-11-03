@@ -30,7 +30,7 @@ import (
 	"github.com/oliveagle/gobco/gomut/internal/report"
 )
 
-const version = "0.5.0"
+const version = "0.5.0-agentark.4"
 
 func main() {
 	os.Exit(run(os.Stdout, os.Stderr, os.Args[1:]))

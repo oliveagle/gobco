@@ -128,9 +128,12 @@ func resolveAbsPath(cg *CallGraph, file string) string {
 	if _, ok := cg.ByFile[file]; ok {
 		return file
 	}
-	// Try matching by suffix against known absolute paths
+	// Try matching the complete repository-relative suffix first. The
+	// basename-only fallback must stay separate: combining it with || inside
+	// this loop lets an unrelated path sharing the basename win based on Go's
+	// randomized map iteration order.
 	for absPath := range cg.ByFile {
-		if strings.HasSuffix(absPath, "/"+file) || strings.HasSuffix(absPath, "/"+filepath.Base(file)) {
+		if strings.HasSuffix(absPath, "/"+file) {
 			return absPath
 		}
 	}
