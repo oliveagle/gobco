@@ -1,2 +1,15 @@
 /coverage.txt
 /out
+
+# gomut dev artifacts (local build/test/session scratch)
+gomut/gomut
+gomut/*.test
+gomut/.gomut-report/
+gomut/.gomut-cache/
+gomut/examples/incremental/
+gomut/FINAL_SUMMARY.md
+gomut/IMPACT_ANALYSIS.md
+gomut/IMPLEMENTATION_SUMMARY.md
+gomut/INCREMENTAL.md
+gomut/REQUIREMENTS_CHECKLIST.md
+gomut/SUMMARY.md
