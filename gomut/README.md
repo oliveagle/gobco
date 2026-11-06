@@ -63,7 +63,7 @@ both to get a fuller picture of test quality.
 ~~~text
 $ go build -o gomut ./cmd/gomut
 $ ./gomut -version
-gomut 0.2.0
+gomut 0.6.0
 ~~~
 
 It also installs cleanly into `$GOPATH/bin`:
@@ -71,6 +71,9 @@ It also installs cleanly into `$GOPATH/bin`:
 ~~~text
 $ go install github.com/oliveagle/gobco/gomut/cmd/gomut@latest
 ~~~
+
+Requires Go 1.25.11 or newer. The module declares `go 1.25.11`, so no
+newer toolchain is downloaded to build or install it.
 
 ## Usage
 
