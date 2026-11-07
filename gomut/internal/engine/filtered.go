@@ -35,7 +35,13 @@ func (e *Engine) RunFiltered(ctx context.Context, mutantFilter FilterFunc, testF
 		mutantsByPkg[p.ImportPath] = muts
 		errorsByPkg[p.ImportPath] = errs
 	}
-	return report.New("gomut", e.opts.Version, mutantsByPkg, errorsByPkg, mutate.Names(e.opts.Operators)), nil
+	rep := report.New("gomut", e.opts.Version, mutantsByPkg, errorsByPkg, mutate.Names(e.opts.Operators))
+	if e.opts.AllTests {
+		rep.Mode = "all-tests"
+	} else {
+		rep.Mode = "coverage-selected"
+	}
+	return rep, nil
 }
 
 // processPackageFiltered is like processPackage but applies mutant and test filters.
