@@ -4,8 +4,8 @@
 # gomut dev artifacts (local build/test/session scratch)
 gomut/gomut
 gomut/*.test
-gomut/.gomut-report/
-gomut/.gomut-cache/
+gomut/**/.gomut-report/
+gomut/**/.gomut-cache/
 gomut/examples/incremental/
 gomut/FINAL_SUMMARY.md
 gomut/IMPACT_ANALYSIS.md

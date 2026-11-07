@@ -63,7 +63,7 @@ both to get a fuller picture of test quality.
 ~~~text
 $ go build -o gomut ./cmd/gomut
 $ ./gomut -version
-gomut 0.6.0
+gomut 0.7.0
 ~~~
 
 It also installs cleanly into `$GOPATH/bin`:
@@ -93,6 +93,12 @@ $ gomut -mutators=Math,Constant -threshold=80 .
 
 # run the whole test suite per mutant (instead of the coverage-selected subset)
 $ gomut -all-tests -v ./pkg
+
+# only mutate what changed since the baseline ref (incremental mode)
+$ gomut -incremental -baseline=main ./...
+
+# show the impact domain of the diff, without running any mutant
+$ gomut -impact -baseline=HEAD~1 ./...
 ~~~
 
 ### Flags
@@ -108,9 +114,37 @@ $ gomut -all-tests -v ./pkg
 | `-format string` | `text` | comma-separated report formats to write: `text`, `json` |
 | `-no-cache` | off | disable the per-package result cache |
 | `-cover-test` | off | also mutate `_test.go` files *(not implemented in v1)* |
+| `-incremental` | off | run incremental mutation testing: mutate only the functions the baseline diff touches (plus their callers) |
+| `-baseline string` | `HEAD` | git ref the diff is taken against in incremental/impact mode |
+| `-impact` | off | print the impact analysis of the baseline diff (changed functions, callers, callees) and exit without running mutants |
 | `-v` | off | print per-mutant progress |
 | `-version` | | print the version and exit |
 | `-help` | | print usage and exit |
+
+## Incremental mode
+
+Full mutation testing is expensive: every mutant re-runs the covering tests.
+When you only changed a little, the incremental mode narrows the work to the
+code the diff can actually affect.
+
+~~~text
+# mutate only what changed since main, and its callers
+$ gomut -incremental -baseline=main ./...
+
+# inspect the impact domain without running a single mutant
+$ gomut -impact -baseline=HEAD~1 ./...
+~~~
+
+- `-incremental` computes the diff against `-baseline`, builds a call graph of
+  the target packages, and mutates only the functions in the impact domain
+  (changed functions, their callers, and interface implementations).
+- `-impact` prints the same domain — directly changed functions, callees
+  (informational) and callers (need retest) — and exits without mutating.
+  It is the cheap way to check whether the narrowing is picking the right
+  functions.
+- `-baseline` is any git ref: `main`, `HEAD~1`, a SHA, a tag.
+
+Both modes need a git repository; outside one they exit `1`.
 
 ## Built-in operators
 
