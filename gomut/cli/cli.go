@@ -28,7 +28,7 @@ import (
 )
 
 // Version is the gomut engine version.
-const Version = "0.7.0"
+const Version = "0.7.1"
 
 // Options configures one CLI run.
 type Options struct {
@@ -183,6 +183,13 @@ func Run(o Options, stdout, stderr io.Writer, args []string) int {
 // An explicit dir (embedders) always wins. Otherwise the first positional
 // argument is used when it names an existing directory, which is what the
 // standalone CLI has always done.
+//
+// When that positional directory becomes the working directory it is also
+// replaced by "." in the pattern list. The engine resolves patterns relative
+// to the working directory, so keeping the directory in the list would make
+// the engine look for "<dir>/<dir>" — `gomut sub` used to fail with
+// "package sub is not in std" while `gomut ./sub` failed with
+// "stat sub/sub: directory not found".
 func resolveWorkDir(dir string, patterns []string) (string, []string) {
 	if dir != "" {
 		return dir, patterns
@@ -191,6 +198,7 @@ func resolveWorkDir(dir string, patterns []string) (string, []string) {
 	if len(patterns) > 0 {
 		if info, err := os.Stat(patterns[0]); err == nil && info.IsDir() {
 			dir = patterns[0]
+			patterns = append([]string{"."}, patterns[1:]...)
 		}
 	}
 	return dir, patterns

@@ -85,9 +85,9 @@ gomut measures *whether* your tests would notice if that branch were wrong —
 a much stronger guarantee than line coverage.
 
 ~~~text
-$ go install github.com/oliveagle/gobco/gomut/cmd/gomut@v0.7.0
+$ go install github.com/oliveagle/gobco/gomut/cmd/gomut@v0.7.1
 $ gomut -version
-gomut 0.7.0
+gomut 0.7.1
 ~~~
 
 See [`gomut/README.md`](gomut/README.md) for usage, flags, and the runnable

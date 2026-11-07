@@ -4,6 +4,7 @@ package cli
 import (
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -164,5 +165,49 @@ func TestInvalidFlagExitsOne(t *testing.T) {
 	want := `gomut: flag provided but not defined: -bogus`
 	if !strings.Contains(stderr, want) {
 		t.Errorf("stderr = %q, want it to contain %q", stderr, want)
+	}
+}
+
+// TestResolveWorkDirPositionalDirectoryBecomesWorkingDir pins the working
+// directory contract: a positional argument that names an existing directory
+// becomes the working directory, and it is replaced by "." in the pattern
+// list so the engine does not resolve it twice (which used to make
+// `gomut sub` fail with "package sub is not in std").
+func TestResolveWorkDirPositionalDirectoryBecomesWorkingDir(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "sub"), 0o755); err != nil {
+		t.Fatalf("mkdir sub: %v", err)
+	}
+	// resolveWorkDir stats the pattern relative to the process working
+	// directory, so the fixture has to be the working directory.
+	t.Chdir(dir)
+
+	gotDir, gotPatterns := resolveWorkDir("", []string{"sub"})
+	if gotDir != "sub" {
+		t.Errorf("dir = %q, want %q", gotDir, "sub")
+	}
+	if len(gotPatterns) != 1 || gotPatterns[0] != "." {
+		t.Errorf("patterns = %v, want [.]", gotPatterns)
+	}
+
+	// An explicit dir (embedders) wins and leaves the patterns untouched.
+	gotDir, gotPatterns = resolveWorkDir("/elsewhere", []string{"sub"})
+	if gotDir != "/elsewhere" {
+		t.Errorf("dir = %q, want %q", gotDir, "/elsewhere")
+	}
+	if len(gotPatterns) != 1 || gotPatterns[0] != "sub" {
+		t.Errorf("patterns = %v, want [sub]", gotPatterns)
+	}
+}
+
+// TestResolveWorkDirKeepsNonDirectoryPattern makes sure an ordinary package
+// pattern is never mistaken for the working directory.
+func TestResolveWorkDirKeepsNonDirectoryPattern(t *testing.T) {
+	gotDir, gotPatterns := resolveWorkDir("", []string{"./..."})
+	if gotDir != "." {
+		t.Errorf("dir = %q, want %q", gotDir, ".")
+	}
+	if len(gotPatterns) != 1 || gotPatterns[0] != "./..." {
+		t.Errorf("patterns = %v, want [./...]", gotPatterns)
 	}
 }

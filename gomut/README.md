@@ -63,7 +63,7 @@ both to get a fuller picture of test quality.
 ~~~text
 $ go build -o gomut ./cmd/gomut
 $ ./gomut -version
-gomut 0.7.0
+gomut 0.7.1
 ~~~
 
 It also installs cleanly into `$GOPATH/bin`:
@@ -83,6 +83,10 @@ $ gomut [flags] [packages...]
 
 Run it from inside the module that contains the code you want to mutate. A
 package pattern follows the usual `go build` conventions (`.`, `./...`).
+
+A package pattern that names an existing directory (`gomut sub`) is treated as
+the working directory: gomut moves into it and mutates that package. Every
+other pattern is resolved relative to the current directory.
 
 ~~~text
 # mutate every package in the current module
