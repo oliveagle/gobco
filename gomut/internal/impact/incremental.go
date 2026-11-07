@@ -19,6 +19,7 @@ type IncrementalEngine struct {
 	*engine.Engine
 	dir         string
 	baselineRef string
+	version     string
 	domain      *Domain
 	callGraph   *CallGraph
 	lineTests   *cover.LineToTests
@@ -26,10 +27,15 @@ type IncrementalEngine struct {
 
 // NewIncremental creates a new incremental engine.
 func NewIncremental(opts engine.Options, baselineRef string) *IncrementalEngine {
+	version := opts.Version
+	if version == "" {
+		version = "dev"
+	}
 	return &IncrementalEngine{
 		Engine:      engine.New(opts),
 		dir:         opts.Dir,
 		baselineRef: baselineRef,
+		version:     version,
 	}
 }
 
@@ -42,7 +48,9 @@ func (ie *IncrementalEngine) RunIncremental(ctx context.Context) (*report.Report
 
 	if len(changes) == 0 {
 		fmt.Fprintf(os.Stderr, "No Go file changes detected in diff\n")
-		return ie.Engine.Run(ctx)
+		rep := report.New("gomut", ie.version, map[string][]*mutant.Mutant{}, map[string][]string{}, nil)
+		rep.Mode = "incremental-no-diff"
+		return rep, nil
 	}
 
 	fmt.Fprintf(os.Stderr, "Found %d changed Go files\n", len(changes))
@@ -136,16 +144,43 @@ func isInImpactDomainFromMutant(m *mutant.Mutant, domain *Domain, cg *CallGraph)
 		}
 	}
 
-	for key := range domain.All {
-		parts := strings.SplitN(key, ":", 2)
-		if len(parts) == 2 {
-			if strings.Contains(m.RelFile, parts[0]) || strings.Contains(key, filepath.Base(m.RelFile)) {
-				return true
-			}
-		}
+	node := mutantNodeAtLine(cg, m)
+	if node == nil {
+		return false
 	}
 
-	return false
+	return domain.All[FuncKey(node.Package, node.Name)]
+}
+
+// mutantNodeAtLine maps a generated mutant back to the call-graph function
+// that contains its source line. Mutants do not carry a function name, so
+// this mapping is required before domain membership can be checked.
+//
+// The previous implementation matched package and file-name substrings from
+// the domain keys. That cannot find a caller's mutants (a caller is in the
+// domain by function, but often has no changed line), and it can accidentally
+// include unrelated functions that happen to share a file name.
+func mutantNodeAtLine(cg *CallGraph, m *mutant.Mutant) *FuncNode {
+	if cg == nil {
+		return nil
+	}
+
+	absFile := resolveAbsPath(cg, m.RelFile)
+	nodes := cg.ByFile[absFile]
+
+	// Prefer the narrowest containing node if metadata or generated fixtures
+	// ever overlap. This keeps interface declarations from shadowing a
+	// concrete method at the same source location.
+	var found *FuncNode
+	for _, node := range nodes {
+		if m.Line < node.StartLine || m.Line > node.EndLine {
+			continue
+		}
+		if found == nil || node.EndLine-node.StartLine < found.EndLine-found.StartLine {
+			found = node
+		}
+	}
+	return found
 }
 
 // GetDomain returns the computed impact domain.

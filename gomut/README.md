@@ -63,7 +63,7 @@ both to get a fuller picture of test quality.
 ~~~text
 $ go build -o gomut ./cmd/gomut
 $ ./gomut -version
-gomut 0.7.1
+gomut 0.7.2
 ~~~
 
 It also installs cleanly into `$GOPATH/bin`:
@@ -149,6 +149,8 @@ $ gomut -impact -baseline=HEAD~1 ./...
 - `-baseline` is any git ref: `main`, `HEAD~1`, a SHA, a tag.
 
 Both modes need a git repository; outside one they exit `1`.
+If an incremental run finds no changed Go files, it returns an empty
+`incremental-no-diff` report instead of silently falling back to a full run.
 
 ## Built-in operators
 

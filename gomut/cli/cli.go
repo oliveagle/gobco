@@ -28,7 +28,7 @@ import (
 )
 
 // Version is the gomut engine version.
-const Version = "0.7.1"
+const Version = "0.7.2"
 
 // Options configures one CLI run.
 type Options struct {
